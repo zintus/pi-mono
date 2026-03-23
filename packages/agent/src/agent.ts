@@ -152,6 +152,8 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
+	private _holdCount = 0;
+	private _waitResolvers: (() => void)[] = [];
 
 	constructor(opts: AgentOptions = {}) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -318,6 +320,33 @@ export class Agent {
 	 */
 	followUp(m: AgentMessage) {
 		this.followUpQueue.push(m);
+		this._wakeWaiters();
+	}
+
+	/**
+	 * Acquire a hold that keeps `dequeueFollowUpMessages()` waiting
+	 * instead of returning an empty array. Returns a release function.
+	 * Used by background processes (e.g., auto-backgrounded bash commands)
+	 * that will queue follow-up messages later.
+	 */
+	acquireHold(): () => void {
+		this._holdCount++;
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			this._holdCount--;
+			this._wakeWaiters();
+		};
+	}
+
+	get hasHolds(): boolean {
+		return this._holdCount > 0;
+	}
+
+	private _wakeWaiters() {
+		const resolvers = this._waitResolvers.splice(0);
+		for (const r of resolvers) r();
 	}
 
 	clearSteeringQueue() {
@@ -352,19 +381,33 @@ export class Agent {
 		return steering;
 	}
 
-	private dequeueFollowUpMessages(): AgentMessage[] {
-		if (this.followUpMode === "one-at-a-time") {
-			if (this.followUpQueue.length > 0) {
+	private async dequeueFollowUpMessages(): Promise<AgentMessage[]> {
+		if (this.followUpQueue.length > 0) {
+			if (this.followUpMode === "one-at-a-time") {
 				const first = this.followUpQueue[0];
 				this.followUpQueue = this.followUpQueue.slice(1);
 				return [first];
 			}
+			const followUp = this.followUpQueue.slice();
+			this.followUpQueue = [];
+			return followUp;
+		}
+
+		// No messages and no holds — done
+		if (this._holdCount === 0) {
 			return [];
 		}
 
-		const followUp = this.followUpQueue.slice();
-		this.followUpQueue = [];
-		return followUp;
+		// Holds exist but queue is empty — wait for message or hold release
+		await new Promise<void>((resolve) => {
+			this._waitResolvers.push(resolve);
+		});
+
+		// After waking, if aborted, return empty to let loop exit
+		if (this.abortController?.signal.aborted) return [];
+
+		// Re-check after waking up
+		return this.dequeueFollowUpMessages();
 	}
 
 	clearMessages() {
@@ -373,6 +416,7 @@ export class Agent {
 
 	abort() {
 		this.abortController?.abort();
+		this._wakeWaiters();
 	}
 
 	waitForIdle(): Promise<void> {
@@ -387,6 +431,8 @@ export class Agent {
 		this._state.error = undefined;
 		this.steeringQueue = [];
 		this.followUpQueue = [];
+		this._holdCount = 0;
+		this._wakeWaiters();
 	}
 
 	/** Send a prompt with an AgentMessage */
@@ -444,7 +490,7 @@ export class Agent {
 				return;
 			}
 
-			const queuedFollowUp = this.dequeueFollowUpMessages();
+			const queuedFollowUp = await this.dequeueFollowUpMessages();
 			if (queuedFollowUp.length > 0) {
 				await this._runLoop(queuedFollowUp);
 				return;
