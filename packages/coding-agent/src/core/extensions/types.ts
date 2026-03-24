@@ -1377,6 +1377,8 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
+	/** Shared event bus for extension communication and agent-to-extension signals. */
+	eventBus: EventBus;
 }
 
 /**

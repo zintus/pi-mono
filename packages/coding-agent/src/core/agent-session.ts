@@ -1180,6 +1180,8 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 		});
+		// Notify extensions so long-running tools (e.g., bash) can interrupt early
+		this._extensionRunner?.emitSteer();
 	}
 
 	/**
