@@ -524,6 +524,10 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 				return success(id, "get_last_assistant_text", { text });
 			}
 
+			case "get_system_prompt": {
+				return success(id, "get_system_prompt", { systemPrompt: session.systemPrompt });
+			}
+
 			case "set_session_name": {
 				const name = command.name.trim();
 				if (!name) {
