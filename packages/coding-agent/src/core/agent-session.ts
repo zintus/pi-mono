@@ -2233,6 +2233,7 @@ export class AgentSession {
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
+				acquireHold: () => this.agent.acquireHold(),
 			},
 			{
 				getModel: () => this.model,

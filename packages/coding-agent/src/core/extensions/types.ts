@@ -1149,6 +1149,14 @@ export interface ExtensionAPI {
 	/** Set thinking level (clamped to model capabilities). */
 	setThinkingLevel(level: ThinkingLevel): void;
 
+	/**
+	 * Acquire a hold that prevents the agent loop from exiting.
+	 * Returns a release function. The loop will not exit until all holds are released.
+	 * Use this when you have background async work (e.g., backgrounded bash commands)
+	 * that will produce follow-up messages.
+	 */
+	acquireHold(): () => void;
+
 	// =========================================================================
 	// Provider Registration
 	// =========================================================================
@@ -1390,6 +1398,7 @@ export interface ExtensionActions {
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
+	acquireHold: () => () => void;
 }
 
 /**
