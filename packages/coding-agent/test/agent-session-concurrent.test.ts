@@ -290,6 +290,78 @@ describe("AgentSession concurrent prompt guard", () => {
 		expect(sawSteeringMessage).toBe(true);
 	});
 
+	it("should allow before_idle handlers to queue follow-up messages in the same loop", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		let beforeIdleCount = 0;
+		let beforeIdleSawActive = false;
+		let sawBeforeIdleFollowUp = false;
+
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: {
+				model,
+				systemPrompt: "Test",
+				tools: [],
+			},
+			streamFn: (_model, context) => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const userTexts = context.messages
+						.filter((message) => message.role === "user")
+						.map((message) => {
+							if (typeof message.content === "string") {
+								return message.content;
+							}
+							return message.content
+								.filter((part): part is TextContent | ImageContent => typeof part === "object" && part !== null)
+								.filter((part): part is TextContent => part.type === "text")
+								.map((part) => part.text)
+								.join("\n");
+						});
+
+					sawBeforeIdleFollowUp ||= userTexts.includes("Follow-up from before idle");
+					const responseText = sawBeforeIdleFollowUp ? "Done" : "First";
+					stream.push({ type: "start", partial: createAssistantMessage("") });
+					stream.push({ type: "done", reason: "stop", message: createAssistantMessage(responseText) });
+				});
+				return stream;
+			},
+		});
+
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+
+		const extensionsResult = await createTestExtensionsResult([
+			(pi) => {
+				pi.on("before_idle", async (_event, ctx) => {
+					beforeIdleCount++;
+					if (beforeIdleCount === 1) {
+						beforeIdleSawActive = !ctx.isIdle();
+						pi.sendUserMessage("Follow-up from before idle", { deliverAs: "followUp" });
+					}
+				});
+			},
+		]);
+
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRegistry,
+			resourceLoader: createTestResourceLoader({ extensionsResult }),
+		});
+
+		await session.prompt("First message");
+
+		expect(beforeIdleSawActive).toBe(true);
+		expect(beforeIdleCount).toBe(2);
+		expect(sawBeforeIdleFollowUp).toBe(true);
+	});
+
 	it("should allow prompt() after previous completes", async () => {
 		// Create session with a stream that completes immediately
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;

@@ -406,6 +406,16 @@ export class AgentSession {
 				details: hookResult.details,
 			};
 		});
+
+		this.agent.setBeforeIdle(async () => {
+			const runner = this._extensionRunner;
+			if (!runner?.hasHandlers("before_idle")) {
+				return;
+			}
+
+			await this._agentEventQueue;
+			await runner.emit({ type: "before_idle" });
+		});
 	}
 
 	// =========================================================================

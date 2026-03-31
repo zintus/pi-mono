@@ -635,6 +635,159 @@ describe("agentLoop with AgentMessage", () => {
 		// Interrupt message should be in context when second LLM call is made
 		expect(sawInterruptInContext).toBe(true);
 	});
+	it("should call beforeIdle before agent_end when quiescent", async () => {
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+
+		const order: string[] = [];
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			beforeIdle: async () => {
+				order.push("beforeIdle");
+			},
+		};
+
+		const stream = agentLoop([createUserMessage("Hello")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				mockStream.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text: "Hi" }]),
+				});
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			order.push(event.type);
+		}
+
+		expect(order).toContain("beforeIdle");
+		expect(order.indexOf("beforeIdle")).toBeLessThan(order.lastIndexOf("agent_end"));
+	});
+
+	it("should continue when beforeIdle queues follow-up work", async () => {
+		const queuedFollowUp = createUserMessage("after idle");
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+
+		let beforeIdleCalls = 0;
+		let releaseFollowUp = false;
+		let sawFollowUpInContext = false;
+		let callIndex = 0;
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			getFollowUpMessages: async () => {
+				if (!releaseFollowUp) {
+					return [];
+				}
+				releaseFollowUp = false;
+				return [queuedFollowUp];
+			},
+			beforeIdle: async () => {
+				beforeIdleCalls++;
+				if (beforeIdleCalls === 1) {
+					releaseFollowUp = true;
+				}
+			},
+		};
+
+		const stream = agentLoop([createUserMessage("start")], context, config, undefined, (_model, ctx) => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 1) {
+					sawFollowUpInContext = ctx.messages.some(
+						(message) =>
+							message.role === "user" && typeof message.content === "string" && message.content === "after idle",
+					);
+				}
+				const text = callIndex === 0 ? "first" : "second";
+				mockStream.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text }]),
+				});
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		expect(callIndex).toBe(2);
+		expect(beforeIdleCalls).toBe(2);
+		expect(sawFollowUpInContext).toBe(true);
+	});
+
+	it("should continue when beforeIdle queues steering work", async () => {
+		const queuedSteering = createUserMessage("interrupt");
+		const context: AgentContext = {
+			systemPrompt: "You are helpful.",
+			messages: [],
+			tools: [],
+		};
+
+		let beforeIdleCalls = 0;
+		let releaseSteering = false;
+		let sawSteeringInContext = false;
+		let callIndex = 0;
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			getSteeringMessages: async () => {
+				if (!releaseSteering) {
+					return [];
+				}
+				releaseSteering = false;
+				return [queuedSteering];
+			},
+			beforeIdle: async () => {
+				beforeIdleCalls++;
+				if (beforeIdleCalls === 1) {
+					releaseSteering = true;
+				}
+			},
+		};
+
+		const stream = agentLoop([createUserMessage("start")], context, config, undefined, (_model, ctx) => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 1) {
+					sawSteeringInContext = ctx.messages.some(
+						(message) =>
+							message.role === "user" && typeof message.content === "string" && message.content === "interrupt",
+					);
+				}
+				const text = callIndex === 0 ? "first" : "second";
+				mockStream.push({
+					type: "done",
+					reason: "stop",
+					message: createAssistantMessage([{ type: "text", text }]),
+				});
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		expect(callIndex).toBe(2);
+		expect(beforeIdleCalls).toBe(2);
+		expect(sawSteeringInContext).toBe(true);
+	});
 });
 
 describe("agentLoopContinue with AgentMessage", () => {

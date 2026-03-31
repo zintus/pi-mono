@@ -111,6 +111,9 @@ export interface AgentOptions {
 
 	/** Called after a tool finishes executing, before final tool events are emitted. */
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
+
+	/** Called when the loop is quiescent and would otherwise stop. */
+	beforeIdle?: () => Promise<void>;
 }
 
 export class Agent {
@@ -152,6 +155,7 @@ export class Agent {
 		context: AfterToolCallContext,
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
+	private _beforeIdle?: () => Promise<void>;
 	private _holdCount = 0;
 	private _waitResolvers: (() => void)[] = [];
 
@@ -171,6 +175,7 @@ export class Agent {
 		this._toolExecution = opts.toolExecution ?? "parallel";
 		this._beforeToolCall = opts.beforeToolCall;
 		this._afterToolCall = opts.afterToolCall;
+		this._beforeIdle = opts.beforeIdle;
 	}
 
 	/**
@@ -253,6 +258,10 @@ export class Agent {
 			| undefined,
 	) {
 		this._afterToolCall = value;
+	}
+
+	setBeforeIdle(value: (() => Promise<void>) | undefined) {
+		this._beforeIdle = value;
 	}
 
 	get state(): AgentState {
@@ -590,6 +599,7 @@ export class Agent {
 			toolExecution: this._toolExecution,
 			beforeToolCall: this._beforeToolCall,
 			afterToolCall: this._afterToolCall,
+			beforeIdle: this._beforeIdle,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,

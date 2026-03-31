@@ -255,6 +255,7 @@ user sends prompt ────────────────────�
   │   │                                            │       │
   │   └─► turn_end                                 │       │
   │                                                        │
+  ├─► before_idle                                         │
   └─► agent_end                                            │
                                                            │
 user sends another prompt ◄────────────────────────────────┘
@@ -443,6 +444,19 @@ pi.on("agent_start", async (_event, ctx) => {});
 
 pi.on("agent_end", async (event, ctx) => {
   // event.messages - messages from this prompt
+});
+```
+
+#### before_idle
+
+Fired when the agent is quiescent and would otherwise stop, but before `agent_end`.
+Handlers may queue steering or follow-up messages; the core re-checks both queues after
+this event and continues the loop if new work was added.
+
+```typescript
+pi.on("before_idle", async (_event, ctx) => {
+  // ctx.isIdle() is still false here
+  pi.sendUserMessage("One more thing", { deliverAs: "followUp" });
 });
 ```
 
@@ -795,6 +809,9 @@ pi.on("tool_result", async (event, ctx) => {
 ### ctx.isIdle() / ctx.abort() / ctx.hasPendingMessages()
 
 Control flow helpers.
+
+`ctx.isIdle()` reports whether the agent is currently streaming. Inside `before_idle`, it is still `false`
+because the agent has not emitted `agent_end` yet.
 
 ### ctx.shutdown()
 

@@ -224,6 +224,19 @@ async function runLoop(
 			continue;
 		}
 
+		await config.beforeIdle?.();
+
+		pendingMessages = (await config.getSteeringMessages?.()) || [];
+		if (pendingMessages.length > 0) {
+			continue;
+		}
+
+		const followUpAfterIdle = (await config.getFollowUpMessages?.()) || [];
+		if (followUpAfterIdle.length > 0) {
+			pendingMessages = followUpAfterIdle;
+			continue;
+		}
+
 		// No more messages, exit
 		break;
 	}
