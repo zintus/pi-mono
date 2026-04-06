@@ -685,6 +685,11 @@ export interface AgentEndEvent {
 	messages: AgentMessage[];
 }
 
+/** Fired when the agent is quiescent and would otherwise become idle */
+export interface BeforeIdleEvent {
+	type: "before_idle";
+}
+
 /** Fired at the start of each turn */
 export interface TurnStartEvent {
 	type: "turn_start";
@@ -1000,6 +1005,7 @@ export type ExtensionEvent =
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
+	| BeforeIdleEvent
 	| TurnStartEvent
 	| TurnEndEvent
 	| MessageStartEvent
@@ -1155,6 +1161,7 @@ export interface ExtensionAPI {
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;
+	on(event: "before_idle", handler: ExtensionHandler<BeforeIdleEvent>): void;
 	on(event: "turn_start", handler: ExtensionHandler<TurnStartEvent>): void;
 	on(event: "turn_end", handler: ExtensionHandler<TurnEndEvent>): void;
 	on(event: "message_start", handler: ExtensionHandler<MessageStartEvent>): void;
@@ -1277,6 +1284,14 @@ export interface ExtensionAPI {
 
 	/** Set thinking level (clamped to model capabilities). */
 	setThinkingLevel(level: ThinkingLevel): void;
+
+	/**
+	 * Acquire a hold that prevents the agent loop from exiting.
+	 * Returns a release function. The loop will not exit until all holds are released.
+	 * Use this when you have background async work (e.g., backgrounded bash commands)
+	 * that will produce follow-up messages.
+	 */
+	acquireHold(): () => void;
 
 	// =========================================================================
 	// Provider Registration
@@ -1508,6 +1523,8 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
+	/** Shared event bus for extension communication and agent-to-extension signals. */
+	eventBus: EventBus;
 }
 
 /**
@@ -1529,6 +1546,7 @@ export interface ExtensionActions {
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
+	acquireHold: () => () => void;
 }
 
 /**

@@ -459,6 +459,16 @@ export class AgentSession {
 				isError: hookResult.isError ?? isError,
 			};
 		};
+
+		this.agent.beforeIdle = async () => {
+			const runner = this._extensionRunner;
+			if (!runner?.hasHandlers("before_idle")) {
+				return;
+			}
+
+			await this._agentEventQueue;
+			await runner.emit({ type: "before_idle" });
+		};
 	}
 
 	// =========================================================================
@@ -1263,6 +1273,8 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 		});
+		// Notify extensions so long-running tools (e.g., bash) can interrupt early
+		this._extensionRunner?.emitSteer();
 	}
 
 	/**
@@ -2261,6 +2273,7 @@ export class AgentSession {
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
+				acquireHold: () => this.agent.acquireHold(),
 			},
 			{
 				getModel: () => this.model,
