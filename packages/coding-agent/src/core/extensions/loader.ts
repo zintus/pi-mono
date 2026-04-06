@@ -156,7 +156,7 @@ function useExtensionCacheCwd(cwd: string): ExtensionCacheToken {
  * Create a runtime with throwing stubs for action methods.
  * Runner.bindCore() replaces these with real implementations.
  */
-export function createExtensionRuntime(): ExtensionRuntime {
+export function createExtensionRuntime(eventBus?: EventBus): ExtensionRuntime {
 	const notInitialized = () => {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
@@ -199,6 +199,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
 		},
+		acquireHold: notInitialized,
+		eventBus: eventBus ?? createEventBus(),
 	};
 
 	return runtime;
@@ -347,6 +349,10 @@ function createExtensionAPI(
 			runtime.setThinkingLevel(level);
 		},
 
+		acquireHold() {
+			return runtime.acquireHold();
+		},
+
 		registerProvider(name: string, config: ProviderConfig) {
 			runtime.assertActive();
 			runtime.registerProvider(name, config, extension.path);
@@ -482,13 +488,13 @@ async function loadExtensionsInternal(
 	const cacheToken = useCache ? useExtensionCacheCwd(cwd) : undefined;
 	const resolvedCwd = cacheToken?.cwd ?? resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
-	const resolvedRuntime = runtime ?? createExtensionRuntime();
+	const resolvedRuntime = runtime ?? createExtensionRuntime(resolvedEventBus);
 
 	for (const extPath of paths) {
 		const { extension, error } = await loadExtension(
 			extPath,
 			resolvedCwd,
-			resolvedEventBus,
+			resolvedRuntime.eventBus,
 			resolvedRuntime,
 			cacheToken,
 		);

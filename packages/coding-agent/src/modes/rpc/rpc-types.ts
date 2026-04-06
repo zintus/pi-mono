@@ -63,6 +63,7 @@ export type RpcCommand =
 	| { id?: string; type: "get_entries"; since?: string }
 	| { id?: string; type: "get_tree" }
 	| { id?: string; type: "get_last_assistant_text" }
+	| { id?: string; type: "get_system_prompt" }
 	| { id?: string; type: "set_session_name"; name: string }
 
 	// Messages
@@ -204,6 +205,13 @@ export type RpcResponse =
 			command: "get_last_assistant_text";
 			success: true;
 			data: { text: string | null };
+	  }
+	| {
+			id?: string;
+			type: "response";
+			command: "get_system_prompt";
+			success: true;
+			data: { systemPrompt: string };
 	  }
 	| { id?: string; type: "response"; command: "set_session_name"; success: true }
 
