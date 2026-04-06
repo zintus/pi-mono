@@ -107,6 +107,7 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	beforeIdle?: () => Promise<void>;
 }
 
 class PendingMessageQueue {
@@ -174,6 +175,9 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
 	private activeRun?: ActiveRun;
+	private _holdCount = 0;
+	private _waitResolvers: (() => void)[] = [];
+	public beforeIdle?: () => Promise<void>;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
@@ -253,6 +257,33 @@ export class Agent {
 	/** Queue a message to run only after the agent would otherwise stop. */
 	followUp(message: AgentMessage): void {
 		this.followUpQueue.enqueue(message);
+		this._wakeWaiters();
+	}
+
+	/**
+	 * Acquire a hold that keeps the follow-up poller waiting
+	 * instead of returning an empty array. Returns a release function.
+	 * Used by background processes (e.g., auto-backgrounded bash commands)
+	 * that will queue follow-up messages later.
+	 */
+	acquireHold(): () => void {
+		this._holdCount++;
+		let released = false;
+		return () => {
+			if (released) return;
+			released = true;
+			this._holdCount--;
+			this._wakeWaiters();
+		};
+	}
+
+	get hasHolds(): boolean {
+		return this._holdCount > 0;
+	}
+
+	private _wakeWaiters() {
+		const resolvers = this._waitResolvers.splice(0);
+		for (const r of resolvers) r();
 	}
 
 	/** Remove all queued steering messages. */
@@ -284,6 +315,7 @@ export class Agent {
 	/** Abort the current run, if one is active. */
 	abort(): void {
 		this.activeRun?.abortController.abort();
+		this._wakeWaiters();
 	}
 
 	/**
@@ -304,6 +336,8 @@ export class Agent {
 		this._state.errorMessage = undefined;
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
+		this._holdCount = 0;
+		this._wakeWaiters();
 	}
 
 	/** Start a new prompt from text, a single message, or a batch of messages. */
@@ -427,7 +461,21 @@ export class Agent {
 				}
 				return this.steeringQueue.drain();
 			},
-			getFollowUpMessages: async () => this.followUpQueue.drain(),
+			getFollowUpMessages: async () => {
+				if (this.followUpQueue.hasItems()) {
+					return this.followUpQueue.drain();
+				}
+				if (this._holdCount === 0) {
+					return [];
+				}
+				// Holds exist but queue is empty — wait for message or hold release
+				await new Promise<void>((resolve) => {
+					this._waitResolvers.push(resolve);
+				});
+				if (this.activeRun?.abortController.signal.aborted) return [];
+				return this.followUpQueue.drain();
+			},
+			beforeIdle: this.beforeIdle,
 		};
 	}
 

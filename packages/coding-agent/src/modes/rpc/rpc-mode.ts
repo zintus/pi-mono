@@ -547,6 +547,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "get_last_assistant_text", { text });
 			}
 
+			case "get_system_prompt": {
+				return success(id, "get_system_prompt", { systemPrompt: session.systemPrompt });
+			}
+
 			case "set_session_name": {
 				const name = command.name.trim();
 				if (!name) {
