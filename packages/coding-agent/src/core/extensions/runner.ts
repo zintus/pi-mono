@@ -451,6 +451,15 @@ export class ExtensionRunner {
 		}
 	}
 
+	/**
+	 * Notify extensions that a steering message was queued.
+	 * Extensions (e.g., enhanced-bash) can listen via pi.events.on("pi:steer")
+	 * to interrupt long-running tool executions.
+	 */
+	emitSteer(): void {
+		this.runtime.eventBus.emit("pi:steer", undefined);
+	}
+
 	hasHandlers(eventType: string): boolean {
 		for (const ext of this.extensions) {
 			const handlers = ext.handlers.get(eventType);

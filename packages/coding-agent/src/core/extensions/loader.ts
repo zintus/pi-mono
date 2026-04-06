@@ -117,7 +117,7 @@ type HandlerFn = (...args: unknown[]) => Promise<unknown>;
  * Create a runtime with throwing stubs for action methods.
  * Runner.bindCore() replaces these with real implementations.
  */
-export function createExtensionRuntime(): ExtensionRuntime {
+export function createExtensionRuntime(eventBus?: EventBus): ExtensionRuntime {
 	const notInitialized = () => {
 		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
 	};
@@ -148,6 +148,8 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
 		},
+		acquireHold: notInitialized,
+		eventBus: eventBus ?? createEventBus(),
 	};
 
 	return runtime;
@@ -275,6 +277,10 @@ function createExtensionAPI(
 			runtime.setThinkingLevel(level);
 		},
 
+		acquireHold() {
+			return runtime.acquireHold();
+		},
+
 		registerProvider(name: string, config: ProviderConfig) {
 			runtime.registerProvider(name, config, extension.path);
 		},
@@ -373,11 +379,10 @@ export async function loadExtensionFromFactory(
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
-	const resolvedEventBus = eventBus ?? createEventBus();
-	const runtime = createExtensionRuntime();
+	const runtime = createExtensionRuntime(eventBus);
 
 	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+		const { extension, error } = await loadExtension(extPath, cwd, runtime.eventBus, runtime);
 
 		if (error) {
 			errors.push({ path: extPath, error });

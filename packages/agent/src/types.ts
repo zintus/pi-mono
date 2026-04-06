@@ -183,6 +183,16 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	getFollowUpMessages?: () => Promise<AgentMessage[]>;
 
 	/**
+	 * Called when the loop is quiescent and would otherwise stop.
+	 *
+	 * The loop re-checks steering and follow-up messages after this callback runs.
+	 * Use this to enqueue work right before the agent becomes idle.
+	 *
+	 * Contract: must not throw or reject.
+	 */
+	beforeIdle?: () => Promise<void>;
+
+	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
 	 * - "parallel": preflight tool calls sequentially, then execute allowed tools concurrently
