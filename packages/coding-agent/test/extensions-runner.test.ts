@@ -267,6 +267,46 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("tool collection", () => {
+		it("binds acquireHold for tool execution", async () => {
+			const extCode = `
+				import { Type } from "@sinclair/typebox";
+				export default function(pi) {
+					pi.registerTool({
+						name: "hold_tool",
+						label: "hold_tool",
+						description: "Acquires and releases a hold",
+						parameters: Type.Object({}),
+						execute: async () => {
+							const releaseHold = pi.acquireHold();
+							releaseHold();
+							return { content: [{ type: "text", text: "ok" }], details: {} };
+						},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "hold-tool.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const releaseHold = vi.fn();
+			const acquireHold = vi.fn(() => releaseHold);
+			runner.bindCore({ ...extensionActions, acquireHold }, extensionContextActions);
+
+			const holdTool = runner.getAllRegisteredTools().find((tool) => tool.definition.name === "hold_tool");
+			expect(holdTool).toBeDefined();
+
+			const output = await holdTool!.definition.execute(
+				"tool-call-1",
+				{},
+				undefined,
+				undefined,
+				runner.createContext(),
+			);
+			expect(output).toEqual({ content: [{ type: "text", text: "ok" }], details: {} });
+			expect(acquireHold).toHaveBeenCalledTimes(1);
+			expect(releaseHold).toHaveBeenCalledTimes(1);
+		});
+
 		it("collects tools from multiple extensions", async () => {
 			const toolCode = (name: string) => `
 				import { Type } from "@sinclair/typebox";
