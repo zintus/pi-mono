@@ -7,6 +7,21 @@
 - No fluff or cheerful filler text
 - Technical prose only, be kind but direct (e.g., "Thanks @user" not "Thanks so much @user!")
 
+## Fork Management (zintus/pi-mono)
+
+This is a fork of `badlogic/pi-mono`. `origin` = `zintus/pi-mono`, `upstream` = `badlogic/pi-mono`.
+
+**Pull upstream + rebuild + reinstall:**
+```bash
+cd /Volumes/Hestia/workspace/pi-mono && git fetch upstream && git merge upstream/main && npm run build && cd packages/coding-agent && bun link
+```
+
+**Fork patches** live on top of upstream's HEAD. Currently: `acquireHold`, `emitSteer`, `before_idle` event, `eventBus` on runtime, `get_system_prompt` RPC command. See `packages/coding-agent/src/core/extensions/AGENTS.md` for the 4-place wiring checklist.
+
+**Stale dist/ is the #1 fork gotcha.** After rebasing or merging upstream, `dist/` may contain old compiled JS with throwing stubs for fork-added methods. Symptom: pi extensions crash with "Extension runtime not initialized" on methods that ARE wired in source. Zeus logs show pi-loop EOF crash-loops. Fix: `npm run build` from repo root, then `bun link` from `packages/coding-agent/`.
+
+**Known bun issue:** `bun install -g .` fails with a dependency loop error in bun 1.3.x on this monorepo. Use `bun link` from `packages/coding-agent/` instead.
+
 ## Code Quality
 
 - No `any` types unless absolutely necessary
