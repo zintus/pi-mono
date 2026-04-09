@@ -255,6 +255,7 @@ export class Agent {
 	/** Queue a message to be injected after the current assistant turn finishes. */
 	steer(message: AgentMessage): void {
 		this.steeringQueue.enqueue(message);
+		this._wakeWaiters();
 	}
 
 	/** Queue a message to run only after the agent would otherwise stop. */
