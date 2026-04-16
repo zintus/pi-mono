@@ -11,9 +11,9 @@
 
 This is a fork of `badlogic/pi-mono`. `origin` = `zintus/pi-mono`, `upstream` = `badlogic/pi-mono`.
 
-**Pull upstream + rebuild + reinstall:**
+**Pull upstream + rebuild + reinstall:** Use `~/spaceship/update-pi.sh` (fetches upstream, rebases custom commits onto latest release tag, builds, links). For manual quick-sync:
 ```bash
-cd /Volumes/Hestia/workspace/pi-mono && git fetch upstream && git merge upstream/main && npm run build && cd packages/coding-agent && bun link
+cd /Volumes/Hestia/workspace/pi-mono && git fetch upstream --tags && git rebase --onto <latest-tag> upstream/main main && npm run build && cd packages/coding-agent && bun link
 ```
 
 **Fork patches** live on top of upstream's HEAD. Currently: `acquireHold`, `emitSteer`, `before_idle` event, `eventBus` on runtime, `get_system_prompt` RPC command. See `packages/coding-agent/src/core/extensions/AGENTS.md` for the 4-place wiring checklist.
