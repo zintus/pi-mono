@@ -29,6 +29,22 @@ describe("provider retry classification", () => {
 		).toBe(false);
 	});
 
+	it("matches transient streaming JSON parse failures", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: "JSON Parse error: Unterminated string" }),
+			),
+		).toBe(true);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: "Property name must be a string literal at line 1 column 2",
+				}),
+			),
+		).toBe(true);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),

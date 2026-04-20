@@ -72,6 +72,12 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	// retry policy so callers can surface/abort the backoff (#1123).
 	"retry delay",
 
+	// Transient SSE JSON parse failures from providers cutting streams mid-JSON.
+	"json parse error",
+	"unterminated string",
+	"property name must be a string literal",
+	"unexpected end of json",
+
 	// Explicit retry guidance emitted mid-stream by OpenAI Responses and Bedrock
 	// stream exceptions (#6019).
 	"you can retry your request",
