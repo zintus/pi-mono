@@ -12,6 +12,7 @@ import { convertToLlm } from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
+import { makeResilientStreamFn } from "./resilient-stream.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.ts";
@@ -30,6 +31,10 @@ import {
 	type ToolName,
 	withFileMutationQueue,
 } from "./tools/index.ts";
+
+// Shared across all AgentSessions in this process so the per-model TTFE histogram
+// survives session restarts within a single pi invocation.
+const resilientStreamSimple = makeResilientStreamFn(streamSimple);
 
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
@@ -311,7 +316,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const timeoutMs = options?.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs;
 			const websocketConnectTimeoutMs =
 				options?.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs();
-			return streamSimple(model, context, {
+			return resilientStreamSimple(model, context, {
 				...options,
 				apiKey: auth.apiKey,
 				timeoutMs,
