@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import {
 	BedrockRuntimeClient,
 	type BedrockRuntimeClientConfig,
@@ -187,6 +189,8 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			config.authSchemePreference = ["httpBearerAuth"];
 		}
 
+		const dump = createBedrockDump(model.id);
+
 		try {
 			const client = new BedrockRuntimeClient(config);
 			if (options.headers && Object.keys(options.headers).length > 0) {
@@ -210,6 +214,14 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			if (nextCommandInput !== undefined) {
 				commandInput = nextCommandInput as typeof commandInput;
 			}
+			dump?.write({
+				type: "request",
+				modelId: model.id,
+				provider: model.provider,
+				region: config.region,
+				endpoint: config.endpoint,
+				input: commandInput,
+			});
 			const command = new ConverseStreamCommand(commandInput);
 
 			const response = await client.send(command, { abortSignal: options.signal });
@@ -218,10 +230,16 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				if (response.$metadata.requestId) {
 					responseHeaders["x-amzn-requestid"] = response.$metadata.requestId;
 				}
+				dump?.write({
+					type: "response_meta",
+					status: response.$metadata.httpStatusCode,
+					headers: responseHeaders,
+				});
 				await options?.onResponse?.({ status: response.$metadata.httpStatusCode, headers: responseHeaders }, model);
 			}
 
 			for await (const item of response.stream!) {
+				dump?.write({ type: "event", item });
 				if (item.messageStart) {
 					if (item.messageStart.role !== ConversationRole.ASSISTANT) {
 						throw new Error("Unexpected assistant message start but got user message start instead");
@@ -258,6 +276,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				throw new Error("An unknown error occurred");
 			}
 
+			dump?.write({ type: "done", stopReason: output.stopReason, usage: output.usage });
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
@@ -268,6 +287,12 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatBedrockError(error);
+			dump?.write({
+				type: "error",
+				stopReason: output.stopReason,
+				errorName: error instanceof Error ? error.name : undefined,
+				errorMessage: output.errorMessage,
+			});
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -275,6 +300,59 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 	return stream;
 };
+
+/**
+ * Request/response dump helper.
+ *
+ * Activated via the PI_BEDROCK_DUMP_DIR env var. When set, writes a JSONL file
+ * per ConverseStream request containing the request payload, response metadata,
+ * every stream event, and the terminal done/error record. Each line is flushed
+ * synchronously so partial state survives hangs or kills mid-stream.
+ *
+ * Intended for debugging hangs where the Bedrock API is suspected of stalling.
+ * Uint8Array image bytes are elided (only length is kept) to keep files readable.
+ */
+interface BedrockDump {
+	write(record: Record<string, unknown>): void;
+}
+
+function createBedrockDump(modelId: string): BedrockDump | undefined {
+	if (typeof process === "undefined" || !(process.versions?.node || process.versions?.bun)) {
+		return undefined;
+	}
+	const dir = process.env.PI_BEDROCK_DUMP_DIR;
+	if (!dir) return undefined;
+	try {
+		fs.mkdirSync(dir, { recursive: true });
+	} catch {
+		return undefined;
+	}
+	const safeModelId = modelId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+	const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+	const rand = Math.random().toString(36).slice(2, 8);
+	const filePath = path.join(dir, `${stamp}-${safeModelId}-${rand}.jsonl`);
+	const start = Date.now();
+	const replacer = (_key: string, value: unknown): unknown => {
+		if (value instanceof Uint8Array) {
+			return { __bytes__: value.byteLength };
+		}
+		if (ArrayBuffer.isView(value)) {
+			return { __view__: (value as ArrayBufferView).byteLength };
+		}
+		return value;
+	};
+	return {
+		write(record) {
+			const now = Date.now();
+			const payload = { t: now, elapsedMs: now - start, ...record };
+			try {
+				fs.appendFileSync(filePath, `${JSON.stringify(payload, replacer)}\n`);
+			} catch {
+				// Best-effort; never break the request because of a dump failure.
+			}
+		},
+	};
+}
 
 /**
  * Human-readable prefixes for Bedrock SDK exception names.
