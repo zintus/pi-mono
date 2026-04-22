@@ -97,6 +97,22 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
+let appliedMaxOutputTokensCapFromSettings = false;
+
+function applyMaxOutputTokensCap(settingsManager: SettingsManager): void {
+	const maxOutputTokensCap = settingsManager.getMaxOutputTokensCap();
+	if (typeof maxOutputTokensCap === "number" && Number.isInteger(maxOutputTokensCap) && maxOutputTokensCap > 0) {
+		process.env.PI_MAX_OUTPUT_TOKENS_CAP = String(maxOutputTokensCap);
+		appliedMaxOutputTokensCapFromSettings = true;
+		return;
+	}
+
+	if (appliedMaxOutputTokensCapFromSettings) {
+		delete process.env.PI_MAX_OUTPUT_TOKENS_CAP;
+		appliedMaxOutputTokensCapFromSettings = false;
+	}
+}
+
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
 	if (parsed.mode === "rpc") {
 		return "rpc";
@@ -672,6 +688,12 @@ export async function main(args: string[], options?: MainOptions) {
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;
+		applyMaxOutputTokensCap(settingsManager);
+		const originalReload = settingsManager.reload.bind(settingsManager);
+		settingsManager.reload = async () => {
+			await originalReload();
+			applyMaxOutputTokensCap(settingsManager);
+		};
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...projectTrustDiagnostics,
 			...services.diagnostics,
