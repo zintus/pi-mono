@@ -45,6 +45,7 @@ import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/tru
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import { type RpcSocketServer, startRpcSocket } from "./modes/rpc/rpc-socket.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -793,6 +794,15 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
+	let rpcSocketServer: RpcSocketServer | undefined;
+	if (parsed.rpcSocket) {
+		if (appMode !== "interactive") {
+			console.error(chalk.red("Error: --rpc-socket is only supported in interactive mode"));
+			process.exit(1);
+		}
+		rpcSocketServer = await startRpcSocket(runtime, expandTildePath(parsed.rpcSocket));
+	}
+
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
 	if (startupBenchmark && appMode !== "interactive") {
 		console.error(chalk.red("Error: PI_STARTUP_BENCHMARK only supports interactive mode"));
@@ -817,6 +827,7 @@ export async function main(args: string[], options?: MainOptions) {
 			time("interactiveMode.init");
 			printTimings();
 			interactiveMode.stop();
+			await rpcSocketServer?.close();
 			stopThemeWatcher();
 			if (process.stdout.writableLength > 0) {
 				await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
@@ -828,7 +839,11 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 
 		printTimings();
-		await interactiveMode.run();
+		try {
+			await interactiveMode.run();
+		} finally {
+			await rpcSocketServer?.close();
+		}
 	} else {
 		printTimings();
 		const exitCode = await runPrintMode(runtime, {
