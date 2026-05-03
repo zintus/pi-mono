@@ -7,7 +7,7 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.ts";
+import type { SessionStats, StreamingBehavior } from "../../core/agent-session.ts";
 import type { BashResult } from "../../core/bash-executor.ts";
 import type { CompactionResult } from "../../core/compaction/index.ts";
 import type { SessionEntry, SessionTreeNode } from "../../core/session-manager.ts";
@@ -23,6 +23,11 @@ type DistributiveOmit<T, K extends keyof T> = T extends unknown ? Omit<T, K> : n
 
 /** RpcCommand without the id field (for internal send) */
 type RpcCommandBody = DistributiveOmit<RpcCommand, "id">;
+
+export interface RpcPromptOptions {
+	/** Queue behavior if the agent is already streaming. "auto" steers only while a turn is active. */
+	streamingBehavior?: StreamingBehavior;
+}
 
 export interface RpcClientOptions {
 	/** Path to the CLI entry point (default: searches for dist/cli.js) */
@@ -194,8 +199,8 @@ export class RpcClient {
 	 * Returns immediately after sending; use onEvent() to receive streaming events.
 	 * Use waitForIdle() to wait for completion.
 	 */
-	async prompt(message: string, images?: ImageContent[]): Promise<void> {
-		await this.send({ type: "prompt", message, images });
+	async prompt(message: string, images?: ImageContent[], options?: RpcPromptOptions): Promise<void> {
+		await this.send({ type: "prompt", message, images, streamingBehavior: options?.streamingBehavior });
 	}
 
 	/**

@@ -17,6 +17,8 @@ Commands are newline-delimited JSON on stdin. Responses and events on stdout.
 
 Key commands: `prompt`, `steer`, `follow_up`, `abort`, `compact`, `get_state`, `set_model`, `bash`, `get_messages`, `get_system_prompt`, `get_last_assistant_text`, `fork`, `switch_session`, `new_session`.
 
+`prompt.streamingBehavior` accepts `"steer"`, `"followUp"`, or fork-specific `"auto"`. `"auto"` is resolved inside the pi process: it queues steering when the session is streaming, otherwise it starts the normal prompt/follow-up turn. Use it when external loop status would be racy.
+
 Every command has an optional `id` field. Responses echo the `id` and include `success: true/false`.
 
 Events (streaming) are emitted with `type: "event"` wrappers around `AgentSessionEvent` payloads.

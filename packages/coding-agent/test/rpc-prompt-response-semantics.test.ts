@@ -172,6 +172,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
+	session: AgentSession;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -181,7 +182,7 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, session: runtimeHost.session, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -281,6 +282,38 @@ describe("RPC prompt response semantics", () => {
 			});
 
 			await sleep(150);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("resolves auto prompt delivery inside RPC mode", async () => {
+		const { lineHandler, session, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 200 });
+
+		try {
+			lineHandler(JSON.stringify({ id: "b4-start", type: "prompt", message: "Start" }));
+			await vi.waitFor(() => {
+				expect(getPromptResponses(rpcIo.outputLines, "b4-start")).toHaveLength(1);
+				expect(session.isStreaming).toBe(true);
+			});
+
+			rpcIo.outputLines = [];
+			lineHandler(
+				JSON.stringify({
+					id: "b4-auto",
+					type: "prompt",
+					message: "Auto while streaming",
+					streamingBehavior: "auto",
+				}),
+			);
+
+			await vi.waitFor(() => {
+				const responses = getPromptResponses(rpcIo.outputLines, "b4-auto");
+				expect(responses).toHaveLength(1);
+				expect(responses[0]).toMatchObject({ success: true });
+				expect(session.getSteeringMessages()).toContain("Auto while streaming");
+				expect(session.getFollowUpMessages()).not.toContain("Auto while streaming");
+			});
 		} finally {
 			await cleanup();
 		}
