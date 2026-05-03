@@ -372,7 +372,7 @@ describe("AgentSession prompt characterization", () => {
 		await sawToolStart;
 
 		await expect(harness.session.prompt("second")).rejects.toThrow(
-			"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+			"Agent is already processing. Specify streamingBehavior ('steer', 'followUp', or 'auto') to queue the message.",
 		);
 
 		releaseToolExecution?.();

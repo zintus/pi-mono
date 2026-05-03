@@ -803,7 +803,7 @@ export interface InputEvent {
 	/** Where the input came from */
 	source: InputSource;
 	/** How the input will be delivered during streaming, or undefined when idle */
-	streamingBehavior?: "steer" | "followUp";
+	streamingBehavior?: "steer" | "followUp" | "auto";
 }
 
 /** Result from input event handler */
