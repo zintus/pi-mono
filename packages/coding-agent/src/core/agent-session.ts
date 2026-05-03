@@ -195,14 +195,16 @@ export interface ExtensionBindings {
 	onError?: ExtensionErrorListener;
 }
 
+export type StreamingBehavior = "steer" | "followUp" | "auto";
+
 /** Options for AgentSession.prompt() */
 export interface PromptOptions {
 	/** Whether to expand file-based prompt templates (default: true) */
 	expandPromptTemplates?: boolean;
 	/** Image attachments */
 	images?: ImageContent[];
-	/** When streaming, how to queue the message: "steer" (interrupt) or "followUp" (wait). Required if streaming. */
-	streamingBehavior?: "steer" | "followUp";
+	/** When streaming, how to queue the message. "auto" steers only if a turn is active. Required if streaming. */
+	streamingBehavior?: StreamingBehavior;
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
@@ -1037,11 +1039,12 @@ export class AgentSession {
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
 			}
 
-			// If streaming, queue via steer() or followUp() based on option
+			// If streaming, queue via steer() or followUp() based on option.
+			// "auto" resolves here, inside the agent process, so callers don't race on external status.
 			if (this.isStreaming) {
 				if (!options?.streamingBehavior) {
 					throw new Error(
-						"Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message.",
+						"Agent is already processing. Specify streamingBehavior ('steer', 'followUp', or 'auto') to queue the message.",
 					);
 				}
 				if (options.streamingBehavior === "followUp") {

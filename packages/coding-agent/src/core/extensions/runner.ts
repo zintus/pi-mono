@@ -1106,7 +1106,7 @@ export class ExtensionRunner {
 		text: string,
 		images: ImageContent[] | undefined,
 		source: InputSource,
-		streamingBehavior?: "steer" | "followUp",
+		streamingBehavior?: "steer" | "followUp" | "auto",
 	): Promise<InputEventResult> {
 		const ctx = this.createContext();
 		let currentText = text;
