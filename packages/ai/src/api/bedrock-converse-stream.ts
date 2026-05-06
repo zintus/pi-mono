@@ -299,6 +299,22 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				throw new Error("An unknown error occurred");
 			}
 
+			// Guard against Bedrock ConverseStream silently closing with no usable events.
+			// Observed failure mode: stream ends cleanly but produced no content blocks and
+			// no metadata (usage stays all zeros), leaving the caller with an invisible
+			// "stop" turn that looks like a hang. Treat whitespace-only text content the
+			// same way. Throwing here surfaces the error to AgentSession's retry path
+			// (matched via `ended without` in _isRetryableError) so the user sees
+			// auto_retry_start in the TUI instead of a frozen prompt.
+			const hasMeaningfulContent = output.content.some((block) => {
+				if (block.type === "text") return (block.text ?? "").trim().length > 0;
+				if (block.type === "thinking") return (block.thinking ?? "").trim().length > 0 || block.redacted === true;
+				return true;
+			});
+			if (!hasMeaningfulContent && output.usage.totalTokens === 0) {
+				throw new Error("Bedrock stream ended without content blocks or usage");
+			}
+
 			dump?.write({ type: "done", stopReason: output.stopReason, usage: output.usage });
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
