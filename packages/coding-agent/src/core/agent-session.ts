@@ -503,7 +503,6 @@ export class AgentSession {
 				return;
 			}
 
-			await this._agentEventQueue;
 			await runner.emit({ type: "before_idle" });
 		};
 	}
