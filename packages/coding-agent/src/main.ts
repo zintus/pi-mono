@@ -112,8 +112,6 @@ function applyMaxOutputTokensCap(settingsManager: SettingsManager): void {
 	}
 }
 
-type AppMode = "interactive" | "print" | "json" | "rpc";
-
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
 	if (parsed.mode === "rpc") {
 		return "rpc";
