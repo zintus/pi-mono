@@ -1321,6 +1321,27 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("API key resolution", () => {
+		test("getApiKeyAndHeaders resolves built-in provider environment credentials", async () => {
+			const originalEnv = process.env.OPENAI_API_KEY;
+			process.env.OPENAI_API_KEY = "environment-openai-key";
+
+			try {
+				const registry = await createModelRegistry(authStorage, modelsJsonPath);
+				const model = registry.find("openai", "gpt-4.1");
+				expect(model).toBeDefined();
+				expect(await registry.getApiKeyAndHeaders(model!)).toMatchObject({
+					ok: true,
+					apiKey: "environment-openai-key",
+				});
+			} finally {
+				if (originalEnv === undefined) {
+					delete process.env.OPENAI_API_KEY;
+				} else {
+					process.env.OPENAI_API_KEY = originalEnv;
+				}
+			}
+		});
+
 		/** Create provider config with custom apiKey */
 		function providerWithApiKey(apiKey: string) {
 			return {
