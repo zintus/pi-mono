@@ -172,9 +172,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const modelRuntime = options.modelRuntime ?? (await ModelRuntime.create({ authPath, modelsPath }));
 	// The tracker inside makeResilientStreamFn is process-global, so its per-model
 	// TTFE history survives session restarts while requests still use this session's runtime.
-	const resilientStreamSimple = makeResilientStreamFn((model, context, streamOptions) =>
-		modelRuntime.streamSimple(model, context, streamOptions),
-	);
+	const resilientStreamSimple = makeResilientStreamFn(modelRuntime.streamSimple.bind(modelRuntime));
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));

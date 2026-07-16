@@ -6,6 +6,7 @@ import {
 	type Model,
 	type StopReason,
 	type StreamFunction,
+	type StreamOptions,
 } from "@earendil-works/pi-ai";
 import { DEFAULT_RESILIENT_STREAM_CONFIG, type ResilientStreamConfig, TTFETracker } from "./ttfe-tracker.ts";
 
@@ -32,10 +33,10 @@ const globalTracker = new TTFETracker();
  *   iterator are caught and converted to a terminal error event on the outer
  *   stream so the caller's `result()` promise always resolves.
  */
-export function makeResilientStreamFn<TApi extends Api>(
-	inner: StreamFunction<TApi>,
+export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamOptions = StreamOptions>(
+	inner: StreamFunction<TApi, TOptions>,
 	options: ResilientStreamOptions = {},
-): StreamFunction<TApi> {
+): StreamFunction<TApi, TOptions> {
 	const tracker = options.tracker ?? globalTracker;
 	const cfg: ResilientStreamConfig = {
 		...DEFAULT_RESILIENT_STREAM_CONFIG,
