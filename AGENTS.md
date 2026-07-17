@@ -11,16 +11,13 @@
 
 ## Fork Management (zintus/pi-mono)
 
-This is a fork of `badlogic/pi-mono`. `origin` = `zintus/pi-mono`, `upstream` = `badlogic/pi-mono`.
+This is a fork of `earendil-works/pi`. `origin` = `zintus/pi-mono`, `upstream` = `earendil-works/pi`.
 
-**Pull upstream + rebuild + reinstall:** Use `~/spaceship/update-pi.sh` (fetches upstream, rebases custom commits onto latest release tag, builds, links). For manual quick-sync:
-```bash
-cd /Volumes/Hestia/workspace/pi-mono && git fetch upstream --tags && git rebase --onto <latest-tag> upstream/main main && npm run build && cd packages/coding-agent && bun link
-```
+**Pull upstream + rebuild + reinstall:** Use `~/spaceship/update-pi.sh`. It fast-forwards from `origin/main`, merges the latest release tag from `upstream/main`, compiles the committed model catalogs, validates the binary, pushes normally, and links the packages. Fork updates use merge commits so commit identities remain stable across machines; never rebase or force-push shared `main`.
 
 **Fork patches** live on top of upstream's HEAD. Currently: `acquireHold`, `emitSteer`, `before_idle` event, `eventBus` on runtime, `get_system_prompt` RPC command. See `packages/coding-agent/src/core/extensions/AGENTS.md` for the 4-place wiring checklist.
 
-**Stale dist/ is the #1 fork gotcha.** After rebasing or merging upstream, `dist/` may contain old compiled JS with throwing stubs for fork-added methods. Symptom: pi extensions crash with "Extension runtime not initialized" on methods that ARE wired in source. Zeus logs show pi-loop EOF crash-loops. Fix: `npm run build` from repo root, then `bun link` from `packages/coding-agent/`.
+**Stale dist/ is the #1 fork gotcha.** After merging upstream, `dist/` may contain old compiled JS with throwing stubs for fork-added methods. Symptom: pi extensions crash with "Extension runtime not initialized" on methods that ARE wired in source. Zeus logs show pi-loop EOF crash-loops. Fix by running `~/spaceship/update-pi.sh`, which cleans and rebuilds the linked packages without regenerating network-backed model catalogs.
 
 **Known bun issue:** `bun install -g .` fails with a dependency loop error in bun 1.3.x on this monorepo. Use `bun link` from `packages/coding-agent/` instead.
 
@@ -73,11 +70,11 @@ Never run (destroys other agents' work or bypasses checks):
 
 - `git reset --hard`, `git checkout .`, `git clean -fd`, `git stash`, `git add -A`, `git add .`, `git commit --no-verify`.
 
-If rebase conflicts occur:
+If upstream merge conflicts occur:
 
 - Resolve conflicts only in files you modified.
 - If a conflict is in a file you did not modify, abort and ask the user.
-- Never force push.
+- Never rebase or force-push shared `main`.
 
 ## Issues and PRs
 
