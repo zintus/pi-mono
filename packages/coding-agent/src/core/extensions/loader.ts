@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import * as _bundledPiAgentCore from "@earendil-works/pi-agent-core";
+import type { Provider } from "@earendil-works/pi-ai";
 import * as _bundledPiAiCompat from "@earendil-works/pi-ai/compat";
 import * as _bundledPiAiOauth from "@earendil-works/pi-ai/oauth";
 import * as _bundledPiAiProviders from "@earendil-works/pi-ai/providers/all";
@@ -195,6 +196,7 @@ export function createExtensionRuntime(eventBus?: EventBus): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
+		pendingNativeProviderRegistrations: [],
 		assertActive,
 		invalidate: (message) => {
 			state.staleMessage ??=
@@ -206,8 +208,14 @@ export function createExtensionRuntime(eventBus?: EventBus): ExtensionRuntime {
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
 			runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
 		},
+		registerNativeProvider: (provider, extensionPath = "<unknown>") => {
+			runtime.pendingNativeProviderRegistrations.push({ provider, extensionPath });
+		},
 		unregisterProvider: (name) => {
 			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
+			runtime.pendingNativeProviderRegistrations = runtime.pendingNativeProviderRegistrations.filter(
+				(r) => r.provider.id !== name,
+			);
 		},
 		acquireHold: notInitialized,
 		eventBus: eventBus ?? createEventBus(),
@@ -369,9 +377,14 @@ function createExtensionAPI(
 			return runtime.acquireHold();
 		},
 
-		registerProvider(name: string, config: ProviderConfig) {
+		registerProvider(providerOrName: Provider | string, config?: ProviderConfig) {
 			runtime.assertActive();
-			runtime.registerProvider(name, config, extension.path);
+			if (typeof providerOrName === "string") {
+				if (!config) throw new Error("Provider config is required when registering by name");
+				runtime.registerProvider(providerOrName, config, extension.path);
+				return;
+			}
+			runtime.registerNativeProvider(providerOrName, extension.path);
 		},
 
 		unregisterProvider(name: string) {

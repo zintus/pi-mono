@@ -180,6 +180,11 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 				return success(id, "cycle_thinking_level", { level });
 			}
 
+			case "get_available_thinking_levels": {
+				const levels = session.getAvailableThinkingLevels();
+				return success(id, "get_available_thinking_levels", { levels });
+			}
+
 			// =================================================================
 			// Queue Modes
 			// =================================================================
