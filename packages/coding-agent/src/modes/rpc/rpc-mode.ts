@@ -234,6 +234,7 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 			case "bash": {
 				const result = await session.executeBash(command.command, undefined, {
 					excludeFromContext: command.excludeFromContext,
+					id,
 				});
 				return success(id, "bash", result);
 			}
