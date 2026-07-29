@@ -19,6 +19,8 @@ This is a fork of `earendil-works/pi`. `origin` = `zintus/pi-mono`, `upstream` =
 
 **Stale dist/ is the #1 fork gotcha.** After merging upstream, `dist/` may contain old compiled JS with throwing stubs for fork-added methods. Symptom: pi extensions crash with "Extension runtime not initialized" on methods that ARE wired in source. Zeus logs show pi-loop EOF crash-loops. Fix by running `~/spaceship/update-pi.sh`, which cleans and rebuilds the linked packages without regenerating network-backed model catalogs.
 
+**Updater refuses to run on a dirty worktree.** `update-pi.sh` aborts with "pi-mono has uncommitted or untracked files; refusing to modify it" before touching anything. The usual cause is regeneration churn left by earlier builds/installs in `package-lock.json`, `packages/ai/src/image-models.generated.ts`, and `packages/ai/src/providers/openrouter.models.ts` — check `git diff` plus file mtimes to confirm the changes are pure regeneration and not hand edits, report that, and ask before restoring or moving them. Never `git checkout .` / `git stash` here; other sessions share this worktree.
+
 **Known bun issue:** `bun install -g .` fails with a dependency loop error in bun 1.3.x on this monorepo. Use `bun link` from `packages/coding-agent/` instead.
 
 ## Code Quality
