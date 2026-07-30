@@ -46,6 +46,7 @@ export function buildBaseOptions(
 		maxTokens: maxTokens === undefined ? undefined : clampMaxTokensToContext(model, context, maxTokens),
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
+		fetch: options?.fetch,
 		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
 		sessionId: options?.sessionId,
