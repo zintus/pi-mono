@@ -23,5 +23,6 @@ Root `npm run check` skips tests. `npm test` is forbidden by fork rules. Tests h
 
 ## Fork-specific
 
+- Native Bedrock applies `StreamOptions.timeoutMs` as an inactivity timeout: HTTP/2 uses Smithy's stream-idle `requestTimeout`, proxy/forced HTTP/1.1 uses `socketTimeout`, and an event-level watchdog resets after each ConverseStream event and aborts the request on a mid-stream stall. Zero disables it; invalid values fail before client creation.
 - `PI_BEDROCK_DUMP_DIR=<dir>` — dumps every Bedrock `ConverseStream` request + stream events + terminal state as JSONL (`src/providers/amazon-bedrock.ts`). Use to diagnose suspected Bedrock-side hangs.
 - `bedrock-provider.{js,d.ts}` at the package root are thin `export * from "./dist/bedrock-provider.js"` stubs, not source; the package subpath export `./bedrock-provider` resolves here.

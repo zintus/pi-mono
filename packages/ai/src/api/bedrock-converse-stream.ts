@@ -24,7 +24,7 @@ import {
 	type ToolResultContentBlock,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
-import { NodeHttpHandler } from "@smithy/node-http-handler";
+import { NodeHttp2Handler, NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
 import { HttpProxyAgent } from "http-proxy-agent";
 import { HttpsProxyAgent } from "https-proxy-agent";
@@ -112,6 +112,47 @@ type Block = (TextContent | ThinkingContent | ToolCall) & {
 
 const EMPTY_TEXT_PLACEHOLDER = "<empty>";
 
+function normalizeTimeoutMs(value: number | undefined): number | undefined {
+	if (value === undefined) return undefined;
+	if (!Number.isFinite(value) || value < 0) {
+		throw new Error(`Invalid timeoutMs: ${String(value)}`);
+	}
+	return Math.floor(value);
+}
+
+function streamIdleTimeoutError(timeoutMs: number): Error {
+	const error = new Error(`Bedrock stream timed out after ${timeoutMs}ms without activity`);
+	error.name = "TimeoutError";
+	return error;
+}
+
+async function* withStreamIdleTimeout<T>(
+	source: AsyncIterable<T>,
+	timeoutMs: number,
+	controller: AbortController,
+): AsyncGenerator<T> {
+	const iterator = source[Symbol.asyncIterator]();
+	while (true) {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		try {
+			const result = await Promise.race([
+				iterator.next(),
+				new Promise<never>((_resolve, reject) => {
+					timer = setTimeout(() => {
+						const error = streamIdleTimeoutError(timeoutMs);
+						reject(error);
+						controller.abort(error);
+					}, timeoutMs);
+				}),
+			]);
+			if (result.done) return;
+			yield result.value;
+		} finally {
+			if (timer) clearTimeout(timer);
+		}
+	}
+}
+
 /** Matches the placeholder the Anthropic API path uses for redacted thinking. */
 const REDACTED_THINKING_PLACEHOLDER = "[Reasoning redacted]";
 
@@ -120,6 +161,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 	context: Context,
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
+	const timeoutMs = normalizeTimeoutMs(options.timeoutMs);
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
@@ -210,14 +252,20 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			if (proxyUrl) {
 				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
 				// on `http2` module and has no support for http agent.
-				// Use NodeHttpHandler to support HTTP(S) proxy agents.
+				// Use NodeHttpHandler to support HTTP(S) proxy agents. `socketTimeout` is the
+				// HTTP/1.1 equivalent of NodeHttp2Handler's stream-idle `requestTimeout`.
 				config.requestHandler = new NodeHttpHandler({
 					httpAgent: new HttpProxyAgent(proxyUrl),
 					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
+					socketTimeout: timeoutMs,
 				});
 			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
-				// Some custom endpoints require HTTP/1.1 instead of HTTP/2
-				config.requestHandler = new NodeHttpHandler();
+				// Some custom endpoints require HTTP/1.1 instead of HTTP/2.
+				config.requestHandler = new NodeHttpHandler({ socketTimeout: timeoutMs });
+			} else if (timeoutMs !== undefined) {
+				// Smithy's HTTP/2 requestTimeout is reset by stream activity, so it aborts a
+				// stale ConverseStream without imposing a wall-clock limit on active output.
+				config.requestHandler = new NodeHttp2Handler({ requestTimeout: timeoutMs });
 			}
 		} else {
 			// Non-Node environment (browser): fall back to us-east-1 since
@@ -277,8 +325,14 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				input: commandInput,
 			});
 			const command = new ConverseStreamCommand(commandInput);
+			const streamTimeoutController = timeoutMs !== undefined && timeoutMs > 0 ? new AbortController() : undefined;
+			const requestSignal = streamTimeoutController
+				? options.signal
+					? AbortSignal.any([options.signal, streamTimeoutController.signal])
+					: streamTimeoutController.signal
+				: options.signal;
 
-			const response = await client.send(command, { abortSignal: options.signal });
+			const response = await client.send(command, { abortSignal: requestSignal });
 			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
 			if (!observedRawResponse && response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
@@ -293,7 +347,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				await options?.onResponse?.({ status: response.$metadata.httpStatusCode, headers: responseHeaders }, model);
 			}
 
-			for await (const item of response.stream!) {
+			const responseStream = streamTimeoutController
+				? withStreamIdleTimeout(response.stream!, timeoutMs!, streamTimeoutController)
+				: response.stream!;
+			for await (const item of responseStream) {
 				dump?.write({ type: "event", item });
 				if (item.messageStart) {
 					if (item.messageStart.role !== ConversationRole.ASSISTANT) {
