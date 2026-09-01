@@ -18,7 +18,7 @@ This is a fork of `earendil-works/pi`. `origin` = `zintus/pi-mono`, `upstream` =
 
 **Pull upstream + rebuild + reinstall:** Use `~/spaceship/update-pi.sh`. It fast-forwards from `origin/main`, merges the latest release tag from `upstream/main`, compiles the committed model catalogs, validates the binary, pushes normally, and links the packages. Fork updates use merge commits so commit identities remain stable across machines; never rebase or force-push shared `main`.
 
-**Fork patches** live on top of upstream's HEAD. Currently: `acquireHold`, `emitSteer`, `before_idle` event, `eventBus` on runtime, `get_system_prompt` RPC command. See `packages/coding-agent/src/core/extensions/AGENTS.md` for the 4-place wiring checklist.
+**Fork patches** live on top of upstream's HEAD. Currently: `acquireHold`, `emitSteer`, `before_idle` event, `eventBus` on runtime, `get_system_prompt` RPC command, `settings.maxOutputTokensCap`, and auto RPC prompt delivery. See `packages/coding-agent/src/core/extensions/AGENTS.md` for the 4-place wiring checklist.
 
 **Stale dist/ is the #1 fork gotcha.** After merging upstream, `dist/` may contain old compiled JS with throwing stubs for fork-added methods. Symptom: pi extensions crash with "Extension runtime not initialized" on methods that ARE wired in source. Zeus logs show pi-loop EOF crash-loops. Fix by running `~/spaceship/update-pi.sh`, which cleans and rebuilds the linked packages without regenerating network-backed model catalogs.
 
@@ -82,6 +82,7 @@ If upstream merge conflicts occur:
 
 - Resolve conflicts only in files you modified.
 - If a conflict is in a file you did not modify, abort and ask the user.
+- Exception: a requested `~/spaceship/update-pi.sh` "fix conflicts" run owns the unmerged files. Keep additive fork patches and new upstream APIs (`git checkout --ours|--theirs` replaces the whole file). Then `~/spaceship/update-pi.sh --hydrate-model-data`, commit the merge, and re-run the script.
 - Never rebase or force-push shared `main`.
 
 ## Issues and PRs
