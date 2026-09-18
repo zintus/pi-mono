@@ -85,6 +85,12 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"property name must be a string literal",
 	"unexpected end of json",
 
+	// Resilient-stream TTFE exhaustion: the provider stalled before the first
+	// response event on every attempt. Emitted as stopReason "error" (never
+	// "aborted") so it stays distinct from user interrupts.
+	"no response from provider",
+	"first-response timeout",
+
 	// Explicit retry guidance emitted mid-stream by OpenAI Responses and Bedrock
 	// stream exceptions (#6019).
 	"you can retry your request",

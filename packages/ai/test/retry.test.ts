@@ -92,6 +92,27 @@ describe("provider retry classification", () => {
 		).toBe(true);
 	});
 
+	it("matches resilient-stream TTFE exhaustion wording", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage:
+						"No response from provider after 3 attempt(s) (first-response timeouts of 50ms/50ms/50ms). The provider appears stalled; this was not a user abort.",
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("keeps aborts non-retryable", () => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "aborted" }))).toBe(false);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: "Request was aborted" }),
+			),
+		).toBe(false);
+	});
+
 	it("classifies assistant error messages", () => {
 		expect(
 			isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })),

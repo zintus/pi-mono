@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed resilient-stream TTFE exhaustion not being retried: provider stalls before the first response event are now classified as transient, so agent turns retry them within the existing retry budget instead of failing immediately.
+
 ## [0.85.1] - 2026-09-05
 
 ### Added
