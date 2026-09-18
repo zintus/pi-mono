@@ -1,7 +1,6 @@
 import {
 	type Api,
 	type AssistantMessage,
-	type AssistantMessageEvent,
 	createAssistantMessageEventStream,
 	type Model,
 	type StopReason,
@@ -25,6 +24,10 @@ const globalTracker = new TTFETracker();
  *   Before warmup or on exploration episodes, uses the hard cap only.
  * - If the first event does not arrive within the cap, aborts the inner stream
  *   via an internal AbortController and retries (up to maxAttempts).
+ * - When attempts are exhausted without any first event, surfaces a terminal
+ *   `error` event describing the provider stall. The swallowed per-attempt
+ *   failures carry reason "aborted" (the watchdog aborted the merged signal),
+ *   but forwarding that would misreport a provider stall as a user abort.
  * - Mid-stream failures (anything after the first event) are NOT retried —
  *   the event passes through unchanged.
  * - A user-provided signal wins: if it aborts, no retry happens and an aborted
@@ -49,9 +52,9 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 
 		(async () => {
 			const userSignal = opts?.signal;
-			let lastError: AssistantMessageEvent | undefined;
 
 			try {
+				const capsMs: number[] = [];
 				for (let attempt = 1; attempt <= cfg.maxAttempts; attempt++) {
 					if (userSignal?.aborted) {
 						finalizeUserAborted(outer, model);
@@ -65,6 +68,7 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 
 					const explore = Math.random() < cfg.exploreP;
 					const cap = explore ? cfg.hardCapMs : tracker.capFor(trackerKey, cfg);
+					capsMs.push(cap);
 
 					let firstEventSeen = false;
 					const startTime = Date.now();
@@ -90,7 +94,6 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 								!firstEventSeen
 							) {
 								retryThisAttempt = true;
-								lastError = ev;
 								break;
 							}
 
@@ -101,6 +104,14 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 							}
 
 							outer.push(ev);
+						}
+					} catch (iteratorError) {
+						if (watchdog.signal.aborted && !userSignal?.aborted && !firstEventSeen) {
+							// The watchdog abort surfaced as a rejected iterator (e.g. fetch
+							// AbortError) instead of an error event — same handling as above.
+							retryThisAttempt = true;
+						} else {
+							throw iteratorError;
 						}
 					} finally {
 						clearTimeout(timer);
@@ -115,9 +126,19 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 						return;
 					}
 
-					if (retryThisAttempt && lastError) {
-						// Exhausted: surface the last TTFE-timeout error to the caller.
-						outer.push(lastError);
+					if (retryThisAttempt) {
+						// Exhausted: translate the swallowed watchdog aborts into an explicit
+						// error. Forwarding the raw "aborted" event would misreport a
+						// provider stall as a user abort.
+						const caps = capsMs.map((ms) => `${ms}ms`).join("/");
+						const errored = buildErrorMessage(
+							model,
+							"error",
+							`No response from provider after ${capsMs.length} attempt(s) ` +
+								`(first-response timeouts of ${caps}). ` +
+								`The provider appears stalled; this was not a user abort.`,
+						);
+						outer.push({ type: "error", reason: "error", error: errored });
 					}
 					outer.end();
 					return;
@@ -125,9 +146,10 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 			} catch (error) {
 				// Inner stream threw synchronously or its iterator rejected.
 				// Convert to a terminal error event so outer.result() always resolves.
+				const aborted = userSignal?.aborted === true;
 				const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
-				const errored = buildErrorMessage(model, "error", message);
-				outer.push({ type: "error", reason: "error", error: errored });
+				const errored = buildErrorMessage(model, aborted ? "aborted" : "error", message);
+				outer.push({ type: "error", reason: aborted ? "aborted" : "error", error: errored });
 				outer.end();
 				return;
 			}

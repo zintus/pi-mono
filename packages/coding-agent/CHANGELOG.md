@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fixed TTFE watchdog exhaustion surfacing as "Operation aborted". When a provider stalls before the first response event on every retry, the resilient stream now surfaces an explicit error naming the stall instead of the watchdog's internal abort, which was indistinguishable from a user interrupt.
+
 ## [0.85.1] - 2026-09-05
 
 ### New Features
