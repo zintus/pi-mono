@@ -1,10 +1,11 @@
 import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
-	type Context,
 	createAssistantMessageEventStream,
 	type Model,
+	normalizeContext,
 	type StreamFunction,
+	type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { makeResilientStreamFn } from "../src/core/resilient-stream.ts";
@@ -23,7 +24,7 @@ const model: Model<"openai-completions"> = {
 	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 };
 
-const context: Context = { messages: [] };
+const context: TranscriptContext = normalizeContext({ messages: [] });
 
 function buildMessage(stopReason: "stop" | "error" | "aborted", text?: string): AssistantMessage {
 	return {

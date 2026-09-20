@@ -71,7 +71,8 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 
 import type { BedrockOptions } from "../src/api/bedrock-converse-stream.ts";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
-import type { Context, Model } from "../src/types.ts";
+import type { Model, TranscriptContext } from "../src/types.ts";
+import { normalizeContext } from "../src/utils/transcript.ts";
 
 const model: Model<"bedrock-converse-stream"> = {
 	id: "us.anthropic.claude-opus-4-8",
@@ -86,9 +87,9 @@ const model: Model<"bedrock-converse-stream"> = {
 	maxTokens: 64_000,
 };
 
-const context: Context = {
+const context: TranscriptContext = normalizeContext({
 	messages: [{ role: "user", content: "hello", timestamp: 0 }],
-};
+});
 
 async function drive(options: BedrockOptions): Promise<void> {
 	await streamBedrock(model, context, {
