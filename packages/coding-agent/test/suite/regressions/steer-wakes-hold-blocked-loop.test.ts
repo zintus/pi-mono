@@ -26,9 +26,6 @@ describe("steer wakes hold-blocked agent loop", () => {
 	it("delivers a steering message while a hold keeps the follow-up poller waiting", async () => {
 		let releaseHold: (() => void) | undefined;
 
-		const harness = await createHarness();
-		harnesses.push(harness);
-
 		const holdTool: AgentTool = {
 			name: "hold_tool",
 			label: "HoldTool",
@@ -57,7 +54,12 @@ describe("steer wakes hold-blocked agent loop", () => {
 			},
 		};
 
-		harness.session.agent.state.tools = [holdTool, releaseTool];
+		// Register tools with the session so canonical request preparation retains them.
+		const harness = await createHarness({
+			tools: [holdTool, releaseTool],
+			initialActiveToolNames: ["hold_tool", "release_tool"],
+		});
+		harnesses.push(harness);
 
 		// Turn 1: call hold_tool -> acquires hold
 		// Turn 2: text only -> loop blocks in getFollowUpMessages (hold active)
@@ -77,6 +79,8 @@ describe("steer wakes hold-blocked agent loop", () => {
 		// outer loop will block on getFollowUpMessages because the hold is active.
 		await waitForCondition(() => getAssistantTexts(harness).includes("done with tools"), 5000);
 		await new Promise((resolve) => setTimeout(resolve, 50));
+		expect(harness.session.agent.hasHolds).toBe(true);
+		expect(harness.session.agent.state.isStreaming).toBe(true);
 
 		// Send a steering message while the loop is blocked.
 		// Do NOT release the hold here -- only the steer should wake the waiter.

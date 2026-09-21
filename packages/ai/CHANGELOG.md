@@ -1,10 +1,14 @@
 # Changelog
 
-## [Unreleased]
+## [0.87.0] - 2026-09-21
+
+### Added
+
+- Added model image-input limit and cache-safe resize metadata to the generated catalog ([#9631](https://github.com/earendil-works/pi/issues/9631)).
 
 ### Fixed
 
-- Fixed resilient-stream TTFE exhaustion not being retried: provider stalls before the first response event are now classified as transient, so agent turns retry them within the existing retry budget instead of failing immediately.
+- Fixed unknown OpenAI-compatible Chat Completions endpoints receiving strict tool schemas unless they explicitly advertise support, while preserving strict tools for capable built-in models ([#9816](https://github.com/earendil-works/pi/issues/9816)).
 
 ## [0.86.1] - 2026-09-20
 
