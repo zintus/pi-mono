@@ -31,7 +31,7 @@ This is a fork of `earendil-works/pi`. `origin` = `zintus/pi-mono`, `upstream` =
 - Read files in full before wide-ranging changes, before editing files you have not fully inspected, and when asked to investigate or audit. Do not rely on search snippets for broad changes.
 - No `any` unless absolutely necessary.
 - Inline single-line helpers that have only one call site.
-- Check node_modules for external API types; don't guess.
+- Check node_modules for external API types; don't guess. After a merge that bumps dependencies, a type error naming a missing member on an external SDK type usually means stale node_modules, not broken code: compare the installed version against package.json and reinstall (`npm ci --ignore-scripts`) before debugging further.
 - **No inline imports** (`await import()`, `import("pkg").Type`, dynamic type imports). Top-level imports only.
 - Never remove or downgrade code to fix type errors from outdated deps; upgrade the dep instead.
 - Use only erasable TypeScript syntax (Node strip-only mode) in code checked by the root config (`packages/*/src`, `packages/*/test`, `packages/coding-agent/examples`): no parameter properties, `enum`, `namespace`/`module`, `import =`, `export =`, or other constructs needing JS emit. Use explicit fields with constructor assignments.
