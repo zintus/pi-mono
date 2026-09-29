@@ -77,8 +77,10 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 					}, cap);
 
 					let retryThisAttempt = false;
+					let terminalForwarded = false;
+					let innerStream: ReturnType<typeof inner> | undefined;
 					try {
-						const innerStream = inner(model, context, {
+						innerStream = inner(model, context, {
 							...(opts ?? {}),
 							signal: mergedSignal,
 						} as typeof opts);
@@ -104,6 +106,7 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 							}
 
 							outer.push(ev);
+							if (ev.type === "done" || ev.type === "error") terminalForwarded = true;
 						}
 					} catch (iteratorError) {
 						if (watchdog.signal.aborted && !userSignal?.aborted && !firstEventSeen) {
@@ -139,6 +142,12 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 								`The provider appears stalled; this was not a user abort.`,
 						);
 						outer.push({ type: "error", reason: "error", error: errored });
+					} else if (!terminalForwarded && innerStream) {
+						// The inner stream may settle via end(result) without a terminal event.
+						// Its result is already resolved then; the race only avoids waiting on a
+						// stream that ended without any result.
+						outer.end(await Promise.race([innerStream.result(), Promise.resolve(undefined)]));
+						return;
 					}
 					outer.end();
 					return;

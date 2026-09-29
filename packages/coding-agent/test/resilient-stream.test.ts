@@ -157,4 +157,18 @@ describe("resilient stream TTFE exhaustion", () => {
 		expect(final.stopReason).toBe("stop");
 		expect(events.filter((e) => e.type === "done")).toHaveLength(1);
 	}, 15000);
+
+	it("resolves the result of a stream that settles via end(result) without events", async () => {
+		const inner: StreamFunction<"openai-completions"> = () => {
+			const stream = createAssistantMessageEventStream();
+			stream.end(buildMessage("stop"));
+			return stream;
+		};
+		const resilient = makeResilientStreamFn(inner, {
+			tracker: new TTFETracker(),
+			config: { hardCapMs: 50, maxAttempts: 3 },
+		});
+		const final = await resilient(model, context).result();
+		expect(final.stopReason).toBe("stop");
+	}, 15000);
 });

@@ -132,6 +132,8 @@ describe("coding-agent documentation", () => {
 	it("has valid navigation and no orphaned Markdown pages", () => {
 		const allPages = globSync("**/*.md", { cwd: docsRoot })
 			.map((path) => path.replaceAll("\\", "/"))
+			// Fork: AGENTS.md files are agent instructions, not published documentation pages.
+			.filter((path) => path !== "AGENTS.md" && !path.endsWith("/AGENTS.md"))
 			.sort();
 		const roots = navigationPaths(readNavigation());
 		const duplicateRoots = [...new Set(roots.filter((path, index) => roots.indexOf(path) !== index))].sort();

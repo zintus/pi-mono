@@ -369,6 +369,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				: response.stream!;
 			for await (const item of responseStream) {
 				dump?.write({ type: "event", item });
+				await options.onProviderStreamEvent?.(item, model);
 				if (item.messageStart) {
 					if (item.messageStart.role !== ConversationRole.ASSISTANT) {
 						throw new Error("Unexpected assistant message start but got user message start instead");

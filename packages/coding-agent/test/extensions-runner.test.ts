@@ -20,6 +20,7 @@ import type {
 	ExtensionActions,
 	ExtensionContextActions,
 	ExtensionFactory,
+	ExtensionToolContext,
 	ExtensionUIContext,
 	ProviderConfig,
 } from "../src/core/extensions/types.ts";
@@ -88,6 +89,7 @@ describe("ExtensionRunner", () => {
 		setLabel: () => {},
 		getActiveTools: () => [],
 		getAllTools: () => [],
+		getSettings: () => ({}),
 		setActiveTools: () => {},
 		refreshTools: () => {},
 		getCommands: () => [],
@@ -408,7 +410,7 @@ describe("ExtensionRunner", () => {
 				{},
 				undefined,
 				undefined,
-				runner.createContext(),
+				runner.createContext() as ExtensionToolContext,
 			);
 			expect(output).toEqual({ content: [{ type: "text", text: "ok" }], details: {} });
 			expect(acquireHold).toHaveBeenCalledTimes(1);
