@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.0.4] - 2026-10-05
+
+### Fixed
+
+- Fixed Bedrock requests that fail with `The pending stream has been canceled` after a stalled HTTP/2 connection not being retried automatically ([#10379](https://github.com/earendil-works/pi/issues/10379))
+
 ## [1.0.3] - 2026-10-05
 
 ### Breaking Changes
