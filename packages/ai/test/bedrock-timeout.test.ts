@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const timeoutMock = vi.hoisted(() => ({
 	clientConfigs: [] as Array<Record<string, unknown>>,
@@ -9,12 +9,16 @@ const timeoutMock = vi.hoisted(() => ({
 
 vi.mock("@smithy/node-http-handler", () => {
 	class NodeHttpHandler {
+		destroy() {}
+
 		constructor(config: Record<string, unknown> = {}) {
 			timeoutMock.http1Configs.push(config);
 		}
 	}
 
 	class NodeHttp2Handler {
+		destroy() {}
+
 		constructor(config: Record<string, unknown> = {}) {
 			timeoutMock.http2Configs.push(config);
 		}
@@ -71,6 +75,7 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
 
 import type { BedrockOptions } from "../src/api/bedrock-converse-stream.ts";
 import { stream as streamBedrock } from "../src/api/bedrock-converse-stream.ts";
+import { cleanupSessionResources } from "../src/session-resources.ts";
 import type { Model, TranscriptContext } from "../src/types.ts";
 import { normalizeContext } from "../src/utils/transcript.ts";
 
@@ -100,6 +105,8 @@ async function drive(options: BedrockOptions): Promise<void> {
 		.result()
 		.catch(() => undefined);
 }
+
+afterEach(() => cleanupSessionResources());
 
 beforeEach(() => {
 	timeoutMock.clientConfigs.length = 0;
@@ -160,12 +167,12 @@ describe("Bedrock timeout forwarding", () => {
 		expect(result.stopReason).toBe("stop");
 	});
 
-	it("preserves the SDK default handler when timeoutMs is absent", async () => {
+	it("uses a pooled HTTP/2 handler with no request timeout when timeoutMs is absent", async () => {
 		await drive({});
 
 		expect(timeoutMock.http1Configs).toHaveLength(0);
-		expect(timeoutMock.http2Configs).toHaveLength(0);
-		expect(timeoutMock.clientConfigs[0]?.requestHandler).toBeUndefined();
+		expect(timeoutMock.http2Configs).toEqual([{ requestTimeout: undefined }]);
+		expect(timeoutMock.clientConfigs[0]?.requestHandler).toBeDefined();
 	});
 
 	it("accepts zero as an explicit disabled timeout", async () => {

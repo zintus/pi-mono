@@ -1,4 +1,4 @@
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, type Model } from "@earendil-works/pi-ai";
+import { type AssistantMessage, createAssistantMessageEventStream, type Model } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { runAgentLoop } from "../src/agent-loop.ts";
 import type { AgentLoopConfig, AgentMessage, StreamFn } from "../src/types.ts";
@@ -17,14 +17,7 @@ const model: Model<"openai-responses"> = {
 };
 
 function response(stopReason: "stop" | "error" | "aborted" = "stop") {
-	const stream = new EventStream<AssistantMessageEvent, AssistantMessage>(
-		(event) => event.type === "done" || event.type === "error",
-		(event) => {
-			if (event.type === "done") return event.message;
-			if (event.type === "error") return event.error;
-			throw new Error("Unexpected event type");
-		},
-	);
+	const stream = createAssistantMessageEventStream();
 	const message: AssistantMessage = {
 		role: "assistant",
 		content: [{ type: "text", text: "done" }],

@@ -1,5 +1,4 @@
 import * as fs from "node:fs";
-import type { Agent as HttpsAgent } from "node:https";
 import * as path from "node:path";
 import {
 	BedrockRuntimeClient,
@@ -24,10 +23,7 @@ import {
 	type ToolResultContentBlock,
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
-import { NodeHttp2Handler, NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DeserializeMiddleware, DocumentType, HttpResponse, MetadataBearer } from "@smithy/types";
-import { HttpProxyAgent } from "http-proxy-agent";
-import { HttpsProxyAgent } from "https-proxy-agent";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -67,6 +63,7 @@ import {
 	type TranscriptContext,
 	withoutInitialSystemMessage,
 } from "../utils/transcript.ts";
+import { acquireBedrockHttpHandler } from "./bedrock-http-handler.ts";
 import { getJsonSchemaToolParameters, resolveJsonSchemaStrictSampling } from "./constrained-sampling.ts";
 import {
 	adjustMaxTokensForThinking,
@@ -260,26 +257,6 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			if (!skipAuth && credentials && !optionsProfile) {
 				config.credentials = credentials;
 			}
-
-			const proxyUrl = resolveHttpProxyUrlForTarget(model.baseUrl, options.env);
-			if (proxyUrl) {
-				// Bedrock runtime uses NodeHttp2Handler by default since v3.798.0, which is based
-				// on `http2` module and has no support for http agent.
-				// Use NodeHttpHandler to support HTTP(S) proxy agents. `socketTimeout` is the
-				// HTTP/1.1 equivalent of NodeHttp2Handler's stream-idle `requestTimeout`.
-				config.requestHandler = new NodeHttpHandler({
-					httpAgent: new HttpProxyAgent(proxyUrl),
-					httpsAgent: new HttpsProxyAgent(proxyUrl) as unknown as HttpsAgent,
-					socketTimeout: timeoutMs,
-				});
-			} else if (getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1") {
-				// Some custom endpoints require HTTP/1.1 instead of HTTP/2.
-				config.requestHandler = new NodeHttpHandler({ socketTimeout: timeoutMs });
-			} else if (timeoutMs !== undefined) {
-				// Smithy's HTTP/2 requestTimeout is reset by stream activity, so it aborts a
-				// stale ConverseStream without imposing a wall-clock limit on active output.
-				config.requestHandler = new NodeHttp2Handler({ requestTimeout: timeoutMs });
-			}
 		} else {
 			// Non-Node environment (browser): fall back to us-east-1 since
 			// there's no config file resolution available.
@@ -297,8 +274,20 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 		// Kept outside the try so the catch can still correlate a mid-stream failure:
 		// exceptions delivered as stream events carry no HTTP metadata of their own.
 		let responseRequestId: string | undefined;
+		let httpHandlerLease: ReturnType<typeof acquireBedrockHttpHandler> | undefined;
+		let headersTimer: ReturnType<typeof setTimeout> | undefined;
+		const requestController = new AbortController();
 
 		try {
+			if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
+				httpHandlerLease = acquireBedrockHttpHandler(
+					JSON.stringify([config.endpoint, config.region, config.profile]),
+					resolveHttpProxyUrlForTarget(model.baseUrl, options.env),
+					getProviderEnvValue("AWS_BEDROCK_FORCE_HTTP1", options.env) === "1",
+					timeoutMs,
+				);
+				config.requestHandler = httpHandlerLease.handler;
+			}
 			const supportsStrictMode = model.compat?.supportsStrictMode ?? false;
 			const client = new BedrockRuntimeClient(config);
 			let observedRawResponse = false;
@@ -344,14 +333,16 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				input: commandInput,
 			});
 			const command = new ConverseStreamCommand(commandInput);
-			const streamTimeoutController = timeoutMs !== undefined && timeoutMs > 0 ? new AbortController() : undefined;
-			const requestSignal = streamTimeoutController
-				? options.signal
-					? AbortSignal.any([options.signal, streamTimeoutController.signal])
-					: streamTimeoutController.signal
-				: options.signal;
+			const requestSignal = options.signal
+				? AbortSignal.any([options.signal, requestController.signal])
+				: requestController.signal;
 
+			const headersTimeoutMs = httpHandlerLease?.headersTimeoutMs;
+			headersTimer = headersTimeoutMs
+				? setTimeout(() => requestController.abort(streamIdleTimeoutError(headersTimeoutMs)), headersTimeoutMs)
+				: undefined;
 			const response = await client.send(command, { abortSignal: requestSignal });
+			clearTimeout(headersTimer);
 			responseRequestId = normalizeDiagnosticValue(response.$metadata.requestId);
 			if (!observedRawResponse && response.$metadata.httpStatusCode !== undefined) {
 				const responseHeaders: Record<string, string> = {};
@@ -366,9 +357,10 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 				await options?.onResponse?.({ status: response.$metadata.httpStatusCode, headers: responseHeaders }, model);
 			}
 
-			const responseStream = streamTimeoutController
-				? withStreamIdleTimeout(response.stream!, timeoutMs!, streamTimeoutController)
-				: response.stream!;
+			const responseStream =
+				timeoutMs !== undefined && timeoutMs > 0
+					? withStreamIdleTimeout(response.stream!, timeoutMs, requestController)
+					: response.stream!;
 			for await (const item of responseStream) {
 				dump?.write({ type: "event", item });
 				await options.onProviderStreamEvent?.(item, model);
@@ -437,7 +429,12 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			dump?.write({ type: "done", stopReason: output.stopReason, usage: output.usage });
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
-		} catch (error) {
+		} catch (caughtError) {
+			const abortReason: unknown = requestController.signal.reason;
+			const error =
+				!options.signal?.aborted && abortReason instanceof Error && abortReason.name === "TimeoutError"
+					? abortReason
+					: caughtError;
 			for (const block of output.content) {
 				finalizeStreamingBlock(block as Block);
 			}
@@ -454,6 +451,12 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
 			}
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
+		} finally {
+			clearTimeout(headersTimer);
+			// Close an unread body if a callback or stream parser failed, without
+			// destroying the handler shared with other in-flight requests.
+			requestController.abort();
+			httpHandlerLease?.release();
 		}
 	})();
 
