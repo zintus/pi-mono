@@ -694,6 +694,7 @@ type ImmediateToolCallOutcome = {
 type ExecutedToolCallOutcome = {
 	result: AgentToolResult<any>;
 	isError: boolean;
+	durationMs: number;
 };
 
 type FinalizedToolCallOutcome = AgentToolCallOutcome;
@@ -843,6 +844,8 @@ async function executePreparedToolCall(
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
+	const startedAt = performance.now();
+	const elapsed = () => Math.round(performance.now() - startedAt);
 
 	try {
 		const result = await prepared.tool.execute(
@@ -854,15 +857,18 @@ async function executePreparedToolCall(
 				updateEvents.push(Promise.resolve(onUpdate(partialResult)));
 			},
 		);
+		const durationMs = elapsed();
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
-		return { result, isError: result.isError === true };
+		return { result, isError: result.isError === true, durationMs };
 	} catch (error) {
+		const durationMs = elapsed();
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
 		return {
 			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
 			isError: true,
+			durationMs,
 		};
 	} finally {
 		acceptingUpdates = false;
@@ -918,6 +924,7 @@ async function finalizeExecutedToolCall(
 		toolCall: prepared.toolCall,
 		result,
 		isError,
+		durationMs: executed.durationMs,
 	};
 }
 
@@ -935,6 +942,7 @@ async function emitToolExecutionEnd(finalized: FinalizedToolCallOutcome, emit: A
 		toolName: finalized.toolCall.name,
 		result: finalized.result,
 		isError: finalized.isError,
+		...(finalized.durationMs === undefined ? {} : { durationMs: finalized.durationMs }),
 	});
 }
 
@@ -949,6 +957,7 @@ function createToolResultMessage(finalized: FinalizedToolCallOutcome): ToolResul
 		details: finalized.result.details,
 		usage: finalized.result.usage,
 		isError: finalized.isError,
+		...(finalized.durationMs === undefined ? {} : { durationMs: finalized.durationMs }),
 		timestamp: Date.now(),
 	};
 }
