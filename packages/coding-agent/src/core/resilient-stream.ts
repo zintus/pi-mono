@@ -23,7 +23,8 @@ const globalTracker = new TTFETracker();
  * - Computes an adaptive cap: min(hardCap, max(kMedian × median, tailMargin × p99)).
  *   Before warmup or on exploration episodes, uses the hard cap only.
  * - If the first event does not arrive within the cap, aborts the inner stream
- *   via an internal AbortController and retries (up to maxAttempts).
+ *   via an internal AbortController and retries (up to maxAttempts). Retries use
+ *   the hard cap so a slower response is not repeatedly cut off by stale samples.
  * - When attempts are exhausted without any first event, surfaces a terminal
  *   `error` event describing the provider stall. The swallowed per-attempt
  *   failures carry reason "aborted" (the watchdog aborted the merged signal),
@@ -67,7 +68,9 @@ export function makeResilientStreamFn<TApi extends Api, TOptions extends StreamO
 						: watchdog.signal;
 
 					const explore = Math.random() < cfg.exploreP;
-					const cap = explore ? cfg.hardCapMs : tracker.capFor(trackerKey, cfg);
+					// A timed-out attempt is absent from the successful-latency samples.
+					// Reusing their cap can abort every retry before a slower response arrives.
+					const cap = attempt > 1 || explore ? cfg.hardCapMs : tracker.capFor(trackerKey, cfg);
 					capsMs.push(cap);
 
 					let firstEventSeen = false;

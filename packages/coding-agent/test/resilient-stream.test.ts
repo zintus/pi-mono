@@ -7,7 +7,7 @@ import {
 	type StreamFunction,
 	type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeResilientStreamFn } from "../src/core/resilient-stream.ts";
 import { TTFETracker } from "../src/core/ttfe-tracker.ts";
 
@@ -100,6 +100,85 @@ async function collect(stream: AssistantMessageEventStream) {
 }
 
 describe("resilient stream TTFE exhaustion", () => {
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.restoreAllMocks();
+	});
+
+	it("recovers a slower response instead of reusing a short learned cap on every attempt", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(1); // No random hard-cap exploration.
+		const tracker = new TTFETracker();
+		for (let i = 0; i < 10; i++) tracker.record(`${model.provider}:${model.id}`, 2075);
+		const startedAt: number[] = [];
+		const inner: StreamFunction<"openai-completions"> = (_model, _context, opts) => {
+			startedAt.push(Date.now());
+			const stream = createAssistantMessageEventStream();
+			const signal = opts?.signal;
+			const onAbort = () => {
+				clearTimeout(timer);
+				stream.push({ type: "error", reason: "aborted", error: buildMessage("aborted") });
+			};
+			const timer = setTimeout(() => {
+				signal?.removeEventListener("abort", onAbort);
+				stream.push({ type: "done", reason: "stop", message: buildMessage("stop") });
+			}, 30_000);
+			signal?.addEventListener("abort", onAbort, { once: true });
+			return stream;
+		};
+		const resilient = makeResilientStreamFn(inner, { tracker });
+		const pending = collect(resilient(model, context));
+		await vi.runAllTimersAsync();
+		const { events, final } = await pending;
+
+		expect(startedAt).toHaveLength(2);
+		expect(startedAt[1] - startedAt[0]).toBe(20_750);
+		expect(final.stopReason).toBe("stop");
+		expect(events.map((event) => event.type)).toEqual(["done"]);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
+	it.each([stallingInner, throwingInner])(
+		"uses the hard cap for bounded retries after an adaptive timeout (%#)",
+		async (inner) => {
+			vi.useFakeTimers();
+			vi.spyOn(Math, "random").mockReturnValue(1);
+			const tracker = new TTFETracker();
+			for (let i = 0; i < 10; i++) tracker.record(`${model.provider}:${model.id}`, 2075);
+			const counter = { attempts: 0 };
+			const resilient = makeResilientStreamFn(inner(counter), { tracker });
+			const pending = collect(resilient(model, context));
+			await vi.runAllTimersAsync();
+			const { events, final } = await pending;
+
+			expect(counter.attempts).toBe(3);
+			expect(final.stopReason).toBe("error");
+			expect(final.errorMessage).toContain("first-response timeouts of 20750ms/90000ms/90000ms");
+			expect(events.map((event) => event.type)).toEqual(["error"]);
+			expect(vi.getTimerCount()).toBe(0);
+		},
+	);
+
+	it("user abort cancels a hard-cap retry without starting another attempt", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(Math, "random").mockReturnValue(1);
+		const tracker = new TTFETracker();
+		for (let i = 0; i < 10; i++) tracker.record(`${model.provider}:${model.id}`, 2075);
+		const counter = { attempts: 0 };
+		const controller = new AbortController();
+		const resilient = makeResilientStreamFn(stallingInner(counter), { tracker });
+		const pending = collect(resilient(model, context, { signal: controller.signal }));
+		await vi.advanceTimersByTimeAsync(20_751);
+		expect(counter.attempts).toBe(2);
+		controller.abort();
+		const { final } = await pending;
+
+		expect(final.stopReason).toBe("aborted");
+		await vi.runAllTimersAsync();
+		expect(counter.attempts).toBe(2);
+		expect(vi.getTimerCount()).toBe(0);
+	});
+
 	it("labels watchdog exhaustion as error, not user abort", async () => {
 		const counter = { attempts: 0 };
 		const resilient = makeResilientStreamFn(stallingInner(counter), {
