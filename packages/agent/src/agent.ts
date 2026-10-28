@@ -224,6 +224,8 @@ export class Agent {
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	private activeRun?: ActiveRun;
 	private _holdCount = 0;
+	/** Bumped by reset() so release closures of dropped holds become no-ops. */
+	private _holdGeneration = 0;
 	private _waitResolvers: (() => void)[] = [];
 	public beforeIdle?: () => Promise<void>;
 	/** Session identifier forwarded to providers for cache-aware backends. */
@@ -327,11 +329,14 @@ export class Agent {
 	 * that will queue follow-up messages later.
 	 */
 	acquireHold(): () => void {
+		const generation = this._holdGeneration;
 		this._holdCount++;
 		let released = false;
 		return () => {
 			if (released) return;
 			released = true;
+			// reset() already dropped every hold of an earlier generation.
+			if (generation !== this._holdGeneration) return;
 			this._holdCount--;
 			this._wakeWaiters();
 		};
@@ -408,6 +413,7 @@ export class Agent {
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
 		this._holdCount = 0;
+		this._holdGeneration++;
 		this._wakeWaiters();
 	}
 
@@ -549,14 +555,17 @@ export class Agent {
 				if (this.followUpQueue.hasItems()) {
 					return this.followUpQueue.drain();
 				}
-				if (this._holdCount === 0) {
+				// Holds keep the loop waiting for a background follow-up, but an aborted run
+				// must end: the background work outlives it and would park the loop again.
+				const signal = this.activeRun?.abortController.signal;
+				if (this._holdCount === 0 || signal?.aborted) {
 					return [];
 				}
-				// Holds exist but queue is empty — wait for message or hold release
+				// Holds exist but queue is empty — wait for message, hold release, or abort
 				await new Promise<void>((resolve) => {
 					this._waitResolvers.push(resolve);
 				});
-				if (this.activeRun?.abortController.signal.aborted) return [];
+				if (signal?.aborted) return [];
 				return this.followUpQueue.drain();
 			},
 			beforeIdle: this.beforeIdle,

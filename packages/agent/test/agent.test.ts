@@ -1226,4 +1226,58 @@ describe("Agent", () => {
 			{ attribution: PI_ATTRIBUTION, userAgent: "short" },
 		]);
 	});
+
+	describe("holds", () => {
+		it("ends an aborted run instead of waiting on an outstanding hold", async () => {
+			const agent = new Agent({
+				streamFn: () => {
+					const stream = createAssistantMessageEventStream();
+					queueMicrotask(() => {
+						stream.push({ type: "done", reason: "stop", message: createAssistantMessage("done") });
+					});
+					return stream;
+				},
+			});
+			let idleCalls = 0;
+			agent.beforeIdle = async () => {
+				idleCalls++;
+			};
+			let turnEnded = false;
+			agent.subscribe((event) => {
+				if (event.type === "turn_end") turnEnded = true;
+			});
+			const release = agent.acquireHold();
+
+			const run = agent.prompt("hello");
+			while (!turnEnded) await new Promise((resolve) => setTimeout(resolve, 1));
+			await new Promise((resolve) => setTimeout(resolve, 20));
+			// The follow-up poll is parked on the hold.
+			expect(agent.state.isStreaming).toBe(true);
+			expect(idleCalls).toBe(0);
+
+			// One abort must finish the run. Before the fix the post-idle follow-up poll
+			// parked on the hold again and a second abort was needed.
+			agent.abort();
+			await expect(
+				Promise.race([run.then(() => "finished"), new Promise((r) => setTimeout(() => r("parked"), 500))]),
+			).resolves.toBe("finished");
+			expect(idleCalls).toBe(1);
+			expect(agent.hasHolds).toBe(true);
+			release();
+			expect(agent.hasHolds).toBe(false);
+		});
+
+		it("ignores releases of holds dropped by reset()", () => {
+			const agent = new Agent({ streamFn: unusedStreamFunction });
+			const staleRelease = agent.acquireHold();
+			agent.reset();
+			expect(agent.hasHolds).toBe(false);
+
+			const release = agent.acquireHold();
+			staleRelease();
+			expect(agent.hasHolds).toBe(true);
+			release();
+			expect(agent.hasHolds).toBe(false);
+		});
+	});
 });

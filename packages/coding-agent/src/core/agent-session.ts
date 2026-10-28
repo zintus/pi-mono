@@ -433,6 +433,12 @@ export class AgentSession {
 	private _abortDuringBeforeSettle = false;
 	private _isEmittingAgentSettled = false;
 	private readonly _deferredSettledActions: Array<() => Promise<void>> = [];
+	/** Calls to {@link abort}; an automatic start deferred during settlement is withdrawn once it moved. */
+	private _abortCount = 0;
+	/** `_abortCount` when the current settlement emission began. */
+	private _settlementAbortBaseline = 0;
+	/** Custom messages that reached the context (message_end); a failed start must not redeliver them. */
+	private readonly _deliveredCustomMessages = new WeakSet<CustomMessage>();
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
@@ -1088,6 +1094,7 @@ export class AgentSession {
 		this._cacheWarmer?.onAgentSettled();
 		this._isAgentRunActive = false;
 		this._isEmittingAgentSettled = true;
+		this._settlementAbortBaseline = this._abortCount;
 		try {
 			const aborted = this._agentRunAbortRequested;
 			await this._extensionRunner.emit({ type: "agent_settled", aborted });
@@ -1098,11 +1105,25 @@ export class AgentSession {
 
 		const deferred = this._deferredSettledActions.splice(0);
 		if (deferred.length > 0) {
+			// Each action is independent (a prompt or an automatic start deferred during
+			// settlement): one failing must not drop the rest. The first error is rethrown.
+			let firstError: unknown;
+			let failed = false;
 			try {
-				for (const action of deferred) await action();
+				for (const action of deferred) {
+					try {
+						await action();
+					} catch (error) {
+						if (!failed) {
+							failed = true;
+							firstError = error;
+						}
+					}
+				}
 			} finally {
 				this._resolveIdleWaitIfIdle();
 			}
+			if (failed) throw firstError;
 			return;
 		}
 		this._resolveIdleWaitIfIdle();
@@ -1157,6 +1178,7 @@ export class AgentSession {
 			let entryId: string | undefined;
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
+				this._deliveredCustomMessages.add(event.message);
 				// Persist as CustomMessageEntry
 				entryId = this.sessionManager.appendCustomMessageEntry(
 					event.message.customType,
@@ -1883,9 +1905,15 @@ export class AgentSession {
 		this._isAgentRunActive = true;
 		this._agentRunAbortRequested = false;
 		let messages: AgentMessage[];
+		// `_prepareRun` takes the pending "nextTurn" messages for this run; a failed
+		// preparation must leave them for the next one, ahead of any queued since.
+		const pendingNextTurn = this._pendingNextTurnMessages;
 		try {
 			messages = await this._prepareRun(trigger);
 		} catch (error) {
+			if (this._pendingNextTurnMessages !== pendingNextTurn) {
+				this._pendingNextTurnMessages = [...pendingNextTurn, ...this._pendingNextTurnMessages];
+			}
 			this._isAgentRunActive = false;
 			this._flushPendingBashMessages();
 			this._flushPendingCustomMessages();
@@ -2389,10 +2417,21 @@ export class AgentSession {
 			}
 		} else if (options?.triggerTurn) {
 			if (this._isEmittingAgentSettled) {
-				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
+				// Started once every settled handler has run, after prompts deferred before it.
+				// An automatic start must not follow an explicit stop: if abort() was called
+				// since this settlement began (during it, or on a run deferred before this
+				// start), the message is delivered with the next run instead ("nextTurn").
+				const baseline = this._settlementAbortBaseline;
+				this._deferredSettledActions.push(async () => {
+					if (this.isStreaming || this._abortCount !== baseline) {
+						this._pendingNextTurnMessages.push(appMessage);
+						return;
+					}
+					await this._startCustomRun(appMessage);
+				});
 				return;
 			}
-			await this._startRun({ messageType: "custom", message: appMessage });
+			await this._startCustomRun(appMessage);
 		} else if (this.isStreaming) {
 			// Appending now would put the message between an assistant tool call and its
 			// result, which providers that validate message order reject on replay. Defer
@@ -2401,6 +2440,21 @@ export class AgentSession {
 			this._pendingCustomMessages.push(appMessage);
 		} else {
 			this._appendCustomMessage(appMessage);
+		}
+	}
+
+	/**
+	 * Start a run with a custom message. If the run fails before the message entered the
+	 * context (a failing preparation), the message is delivered with the next run instead
+	 * of being lost; the error still propagates. A failure after delivery (for example a
+	 * deferred action of the run's own settlement) does not deliver it again.
+	 */
+	private async _startCustomRun(appMessage: CustomMessage): Promise<void> {
+		try {
+			await this._startRun({ messageType: "custom", message: appMessage });
+		} catch (error) {
+			if (!this._deliveredCustomMessages.has(appMessage)) this._pendingNextTurnMessages.push(appMessage);
+			throw error;
 		}
 	}
 
@@ -2508,6 +2562,7 @@ export class AgentSession {
 	 * Abort current operation and wait for agent to become idle.
 	 */
 	async abort(): Promise<void> {
+		this._abortCount++;
 		if (this._isAgentRunActive) {
 			this._agentRunAbortRequested = true;
 		}
