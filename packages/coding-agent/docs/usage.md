@@ -22,7 +22,7 @@ To include files or images:
 
 Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.
 
-Press `Alt+O` for **prose-only mode**: keep your messages and assistant text, but hide thinking (including its placeholder) and non-error tool calls, including codemode scripts, nested calls, results, and tool images. Failed tool calls, warnings, approval dialogs, and commands you run with `!` remain visible. The built-in footer shows `prose only` while enabled.
+Press `Alt+O` for **prose-only mode**: keep your messages and assistant text, but hide thinking (including its placeholder) and tool details, including codemode scripts, nested calls, results, and tool images—even when a tool fails. Failed tools show a compact notice with a shortcut hint to leave prose mode and inspect the details. Warnings, approval dialogs, and commands you run with `!` remain visible. The built-in footer shows `prose only` while enabled.
 
 Press `Alt+O` again to restore the normal view and its previous collapse states, even during a running tool. In prose mode the working indicator above the input shows tool-call count, elapsed time, and failed calls when nonzero (for example, `Working · 14 tool calls · 1m 23s`). Counts include codemode and its nested calls, accumulate across retries and compaction, and reset for the next request after the agent settles. A failed call does not necessarily mean the task failed.
 

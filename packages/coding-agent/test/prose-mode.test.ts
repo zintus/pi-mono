@@ -1,6 +1,16 @@
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { Container, setKeybindings, Text, type TUI, type TuiMouseEvent, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	Container,
+	Image,
+	resetCapabilitiesCache,
+	setCapabilities,
+	setKeybindings,
+	Text,
+	type TUI,
+	type TuiMouseEvent,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
@@ -14,6 +24,7 @@ import { type SessionEntry, SessionManager } from "../src/core/session-manager.t
 import { codemodeRenderers } from "../src/extensions/codemode/renderer.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
+import { keyHint } from "../src/modes/interactive/components/keybinding-hints.ts";
 import { type WorkingProgress, WorkingStatusIndicator } from "../src/modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { createInteractiveTui, InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -66,7 +77,10 @@ beforeEach(() => {
 	vi.setSystemTime(0);
 	setKeybindings(new KeybindingsManager());
 });
-afterEach(() => vi.useRealTimers());
+afterEach(() => {
+	vi.useRealTimers();
+	resetCapabilitiesCache();
+});
 
 describe("prose-only components", () => {
 	test.each([false, true])("hides thinking without placeholders and restores collapse state (hidden=%s)", (hidden) => {
@@ -141,13 +155,81 @@ describe("prose-only components", () => {
 			expect(result).toEqual(snapshot);
 			component.setProseOnly(true);
 			component.updateResult({ content: [{ type: "text", text: "permission denied" }], isError: true });
+			expect(text(component).trim()).toBe(
+				`codemode failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`,
+			);
+			expect(text(component)).not.toContain("permission denied");
+			component.setProseOnly(false);
 			expect(text(component)).toContain("permission denied");
 		},
 	);
 
-	test("hidden tools cannot receive clicks", () => {
+	test.each([false, true])(
+		"failed codemode hides scripts, nested calls, output and images (expanded=%s)",
+		(expanded) => {
+			setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+			const imageRender = vi.spyOn(Image.prototype, "render").mockReturnValue(["tool image"]);
+			try {
+				const component = tool(codemodeRenderers);
+				component.setExpanded(expanded);
+				component.setProseOnly(true);
+				component.markExecutionStarted();
+				const result = {
+					content: [
+						{ type: "text", text: "Script failed\nWall time 0.1 seconds\nOutput:\n" },
+						{ type: "text", text: "large partial output\nScript error: command failed" },
+						{ type: "image", data: "aW1hZ2U=", mimeType: "image/png" },
+					],
+					isError: true,
+					details: {
+						calls: [
+							{ name: "read", args: '{"path":"notes.txt"}', status: "ok", durationMs: 3 },
+							{ name: "bash", args: '{"command":"false"}', status: "error", durationMs: 85, error: "exit 1" },
+						],
+						fullOutputPath: "/tmp/codemode-output.txt",
+					},
+				};
+				const snapshot = structuredClone(result);
+				component.updateResult({ ...result, isError: false }, true);
+				expect(component.render(100)).toEqual([]);
+				component.updateResult(result);
+				component.invalidate();
+				const summary = `codemode failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`;
+				expect(text(component).trim()).toBe(summary);
+				expect(imageRender).not.toHaveBeenCalled();
+				for (const width of [10, 40, 100]) {
+					for (const line of component.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+				}
+				component.setProseOnly(false);
+				const normal = component.render(100);
+				expect(text(component)).toContain('text("script output");');
+				expect(text(component)).toContain('"command":"false"');
+				expect(text(component)).toContain("large partial output");
+				expect(imageRender).toHaveBeenCalled();
+				component.setProseOnly(true);
+				expect(text(component).trim()).toBe(summary);
+				component.setProseOnly(false);
+				expect(component.render(100)).toEqual(normal);
+				expect(result).toEqual(snapshot);
+			} finally {
+				imageRender.mockRestore();
+			}
+		},
+	);
+
+	test("failure notices use the configured prose shortcut", () => {
+		setKeybindings(new KeybindingsManager({ "app.transcript.prose": "ctrl+alt+o" }));
 		const component = tool();
-		component.updateResult({ content: [{ type: "text", text: "output" }], isError: false });
+		component.updateResult({ content: [], isError: true });
+		component.setProseOnly(true);
+		expect(text(component).trim()).toBe(
+			`codemode failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`,
+		);
+	});
+
+	test.each([false, true])("hidden tool details cannot receive clicks (isError=%s)", (isError) => {
+		const component = tool();
+		component.updateResult({ content: [{ type: "text", text: "output" }], isError });
 		component.render(80);
 		component.setProseOnly(true);
 		const event: TuiMouseEvent = {
@@ -321,42 +403,53 @@ describe("prose-only interactive wiring", () => {
 		}
 	});
 
-	test("historical/rebuilt entries inherit prose mode without modifying saved messages", () => {
-		const ctx = context(true);
-		const entries: SessionEntry[] = [
-			{
-				type: "message",
-				id: "a",
-				parentId: null,
-				timestamp: "2026-01-01T00:00:00Z",
-				message: assistant([{ type: "thinking", thinking: "reasoning" }, { type: "text", text: "Summary" }, call]),
-			},
-			{
-				type: "message",
-				id: "b",
-				parentId: "a",
-				timestamp: "2026-01-01T00:00:00Z",
-				message: {
-					role: "toolResult",
-					toolCallId: "call",
-					toolName: "read",
-					content: [{ type: "text", text: "result" }],
-					isError: false,
-					timestamp: 0,
+	test.each([false, true])(
+		"historical/rebuilt entries inherit prose mode without modifying saved messages (isError=%s)",
+		(isError) => {
+			const ctx = context(true);
+			const entries: SessionEntry[] = [
+				{
+					type: "message",
+					id: "a",
+					parentId: null,
+					timestamp: "2026-01-01T00:00:00Z",
+					message: assistant([
+						{ type: "thinking", thinking: "reasoning" },
+						{ type: "text", text: "Summary" },
+						call,
+					]),
 				},
-			},
-		];
-		const snapshot = structuredClone(entries);
-		ctx.renderSessionEntries(entries);
-		expect(text(ctx.chatContainer).trim()).toBe("Summary");
-		ctx.chatContainer.clear();
-		ctx.renderSessionEntries(entries);
-		expect(text(ctx.chatContainer).trim()).toBe("Summary");
-		ctx.toggleProseOnly();
-		expect(text(ctx.chatContainer)).toContain("result");
-		expect(entries).toEqual(snapshot);
-		expect(ctx.workingProgress).toBeUndefined();
-	});
+				{
+					type: "message",
+					id: "b",
+					parentId: "a",
+					timestamp: "2026-01-01T00:00:00Z",
+					message: {
+						role: "toolResult",
+						toolCallId: "call",
+						toolName: "read",
+						content: [{ type: "text", text: "result" }],
+						isError,
+						timestamp: 0,
+					},
+				},
+			];
+			const snapshot = structuredClone(entries);
+			ctx.renderSessionEntries(entries);
+			const rendered = text(ctx.chatContainer);
+			expect(rendered).toContain("Summary");
+			expect(rendered).not.toContain("result");
+			if (isError) expect(rendered).toContain("read failed");
+			else expect(rendered.trim()).toBe("Summary");
+			ctx.chatContainer.clear();
+			ctx.renderSessionEntries(entries);
+			expect(text(ctx.chatContainer)).toBe(rendered);
+			ctx.toggleProseOnly();
+			expect(text(ctx.chatContainer)).toContain("result");
+			expect(entries).toEqual(snapshot);
+			expect(ctx.workingProgress).toBeUndefined();
+		},
+	);
 
 	test("streamed and direct tool starts stay hidden, update in place, and surface failures", async () => {
 		const ctx = context(true);
@@ -386,7 +479,8 @@ describe("prose-only interactive wiring", () => {
 		await ctx.handleEvent({ ...start, toolCallId: "direct" });
 		expect(ctx.pendingTools.get("direct")?.render(100)).toEqual([]);
 		await ctx.handleEvent({ ...end, toolCallId: "direct", isError: true });
-		expect(text(ctx.chatContainer)).toContain("tool output");
+		expect(text(ctx.chatContainer)).toContain("read failed");
+		expect(text(ctx.chatContainer)).not.toContain("tool output");
 		ctx.toggleProseOnly();
 		expect(text(ctx.chatContainer)).not.toContain("partial");
 		expect(text(ctx.chatContainer)).toContain("tool output");

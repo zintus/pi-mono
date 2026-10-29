@@ -205,7 +205,7 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	/** Keep live results and renderer state intact while hiding non-error tool rows. */
+	/** Keep live results and renderer state intact while hiding tool details. */
 	setProseOnly(proseOnly: boolean): void {
 		this.proseOnly = proseOnly;
 	}
@@ -231,7 +231,14 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		if (this.hideComponent || (this.proseOnly && !this.result?.isError)) {
+		if (this.proseOnly) {
+			if (!this.result?.isError) return [];
+			// A failed script can include successful output, nested calls and images.
+			// Keep the failure visible without revealing any of those tool details.
+			const notice = `${theme.fg("error", `${this.toolName} failed`)} · ${keyHint("app.transcript.prose", "to show details")}`;
+			return ["", ...new Text(notice, this.outputPad, 0).render(width)];
+		}
+		if (this.hideComponent) {
 			return [];
 		}
 
@@ -264,7 +271,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
-		if (this.hideComponent || (this.proseOnly && !this.result?.isError)) return undefined;
+		if (this.hideComponent || this.proseOnly) return undefined;
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
 		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
 		return this.selfRenderContainer.handleMouse({
