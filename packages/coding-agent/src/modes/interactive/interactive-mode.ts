@@ -172,6 +172,7 @@ import {
 	IdleStatus,
 	RetryStatusIndicator,
 	type StatusIndicator,
+	type WorkingProgress,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
 import { ThemedText } from "./components/themed-text.ts";
@@ -512,6 +513,10 @@ export class InteractiveMode {
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
+
+	// Display-only; never changes session messages or the normal view's collapse state.
+	private proseOnly = false;
+	private workingProgress: WorkingProgress | undefined;
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -1038,6 +1043,7 @@ export class InteractiveMode {
 					),
 					hint("app.model.select", "to select model"),
 					hint("app.tools.expand", "to expand tools"),
+					hint("app.transcript.prose", "for prose-only mode"),
 					hint("app.thinking.toggle", "to expand thinking"),
 					hint("app.editor.external", "for external editor"),
 					rawKeyHint("/", "for commands"),
@@ -2210,6 +2216,7 @@ export class InteractiveMode {
 	}
 
 	private renderCurrentSessionState(): void {
+		this.workingProgress = undefined;
 		this.loadedResourcesContainer.clear();
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
@@ -2350,14 +2357,14 @@ export class InteractiveMode {
 			? (text: string) =>
 					(this.editor.borderColor ?? theme.getThinkingBorderColor(this.session.thinkingLevel || "off"))(text)
 			: undefined;
-		this.showStatusIndicator(
-			new WorkingStatusIndicator(
-				this.ui,
-				this.workingMessage ?? this.defaultWorkingMessage,
-				this.workingIndicatorOptions,
-				colorFn,
-			),
+		const indicator = new WorkingStatusIndicator(
+			this.ui,
+			this.workingMessage ?? this.defaultWorkingMessage,
+			this.workingIndicatorOptions,
+			colorFn,
 		);
+		indicator.setProgress(this.proseOnly ? this.workingProgress : undefined);
+		this.showStatusIndicator(indicator);
 	}
 
 	private setWorkingVisible(visible: boolean): void {
@@ -3064,6 +3071,7 @@ export class InteractiveMode {
 		this.ui.onDebug = () => this.handleDebugCommand();
 		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("app.transcript.prose", () => this.toggleProseOnly());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => void this.handleOpenExternalEditor());
 		this.defaultEditor.onAction(
@@ -3368,6 +3376,24 @@ export class InteractiveMode {
 		this.footer.invalidate();
 		this.programStatus.handleEvent(event);
 
+		// Count execution starts, not streamed arguments. Nested codemode calls count too.
+		// Keep totals across retries/compaction until the request has actually settled.
+		let progressChanged = true;
+		if (event.type === "agent_start") {
+			this.workingProgress ??= { startedAt: Date.now(), toolCalls: 0, failedCalls: 0 };
+		} else if (event.type === "agent_settled") {
+			this.workingProgress = undefined;
+		} else if (this.workingProgress && event.type === "tool_execution_start") {
+			this.workingProgress.toolCalls++;
+		} else if (this.workingProgress && event.type === "tool_execution_end" && event.isError) {
+			this.workingProgress.failedCalls++;
+		} else {
+			progressChanged = false;
+		}
+		if (progressChanged && this.proseOnly && this.activeStatusIndicator instanceof WorkingStatusIndicator) {
+			this.activeStatusIndicator.setProgress(this.workingProgress);
+		}
+
 		switch (event.type) {
 			case "agent_start":
 				this.pendingTools.clear();
@@ -3471,6 +3497,7 @@ export class InteractiveMode {
 						this.outputPad,
 						this.getMarkdownTransformers(),
 					);
+					this.streamingComponent.setProseOnly(this.proseOnly);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
 					this.streamingComponent.updateContent(this.streamingMessage, true);
@@ -3500,6 +3527,7 @@ export class InteractiveMode {
 									this.sessionManager.getCwd(),
 								);
 								component.setExpanded(this.toolOutputExpanded);
+								component.setProseOnly(this.proseOnly);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
 							} else {
@@ -3579,6 +3607,7 @@ export class InteractiveMode {
 						this.sessionManager.getCwd(),
 					);
 					component.setExpanded(this.toolOutputExpanded);
+					component.setProseOnly(this.proseOnly);
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
 				}
@@ -3944,6 +3973,7 @@ export class InteractiveMode {
 					this.outputPad,
 					this.getMarkdownTransformers(),
 				);
+				assistantComponent.setProseOnly(this.proseOnly);
 				this.chatContainer.addChild(assistantComponent);
 				break;
 			}
@@ -4009,6 +4039,7 @@ export class InteractiveMode {
 							this.sessionManager.getCwd(),
 						);
 						component.setExpanded(this.toolOutputExpanded);
+						component.setProseOnly(this.proseOnly);
 						this.chatContainer.addChild(component);
 
 						if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -4521,6 +4552,23 @@ export class InteractiveMode {
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
+	}
+
+	private toggleProseOnly(): void {
+		this.proseOnly = !this.proseOnly;
+		// Keep the live component instances: rebuilding from history loses in-flight tool output.
+		for (const child of this.chatContainer.children) {
+			if (child instanceof AssistantMessageComponent || child instanceof ToolExecutionComponent) {
+				child.setProseOnly(this.proseOnly);
+			}
+		}
+		// Selection coordinates no longer refer to the same rendered text.
+		if (this.renderer instanceof TuiAltScreen) this.renderer.resetTextSelection();
+		this.footer.setProseOnly(this.proseOnly);
+		if (this.activeStatusIndicator instanceof WorkingStatusIndicator) {
+			this.activeStatusIndicator.setProgress(this.proseOnly ? this.workingProgress : undefined);
+		}
+		this.showStatus(`Prose-only mode: ${this.proseOnly ? "on" : "off"}`);
 	}
 
 	private toggleToolOutputExpansion(): void {
@@ -6815,6 +6863,7 @@ export class InteractiveMode {
 		const cycleModelForward = this.getAppKeyDisplay("app.model.cycleForward");
 		const selectModel = this.getAppKeyDisplay("app.model.select");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
+		const toggleProse = this.getAppKeyDisplay("app.transcript.prose");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
 		const cycleModelBackward = this.getAppKeyDisplay("app.model.cycleBackward");
@@ -6860,6 +6909,7 @@ export class InteractiveMode {
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
+| \`${toggleProse}\` | Toggle prose-only mode |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${copyMessage}\` | Copy selection or last assistant message |

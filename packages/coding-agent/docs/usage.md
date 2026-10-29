@@ -22,6 +22,12 @@ To include files or images:
 
 Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.
 
+Press `Alt+O` for **prose-only mode**: keep your messages and assistant text, but hide thinking (including its placeholder) and non-error tool calls, including codemode scripts, nested calls, results, and tool images. Failed tool calls, warnings, approval dialogs, and commands you run with `!` remain visible. The built-in footer shows `prose only` while enabled.
+
+Press `Alt+O` again to restore the normal view and its previous collapse states, even during a running tool. In prose mode the working indicator above the input shows tool-call count, elapsed time, and failed calls when nonzero (for example, `Working · 14 tool calls · 1m 23s`). Counts include codemode and its nested calls, accumulate across retries and compaction, and reset for the next request after the agent settles. A failed call does not necessarily mean the task failed.
+
+This is a display-only toggle for the current Pi process; it does not change reasoning effort, model context, saved history, or exports. On macOS, the terminal must send Option as Alt. Rebind `app.transcript.prose` in [Keybindings](keybindings.md) if needed.
+
 The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The footer updates as the model uses context and reports usage.
 
 Pi does not ask before every tool call. Review commands and changed files, and use a sandbox for untrusted or unattended work. See [Security](security.md).

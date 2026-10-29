@@ -61,6 +61,7 @@ interface SessionStats {
  */
 export class FooterComponent implements Component {
 	private autoCompactEnabled = true;
+	private proseOnly = false;
 	private session: AgentSession;
 	private footerData: ReadonlyFooterDataProvider;
 	private sessionStats?: SessionStats;
@@ -72,6 +73,10 @@ export class FooterComponent implements Component {
 
 	setSession(session: AgentSession): void {
 		this.session = session;
+	}
+
+	setProseOnly(proseOnly: boolean): void {
+		this.proseOnly = proseOnly;
 	}
 
 	setAutoCompactEnabled(enabled: boolean): void {
@@ -178,6 +183,7 @@ export class FooterComponent implements Component {
 
 		// Build stats line
 		const statsParts = [];
+		if (this.proseOnly) statsParts.push(theme.fg("accent", "prose only"));
 		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
 		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
 		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);

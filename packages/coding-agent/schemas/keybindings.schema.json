@@ -235,6 +235,10 @@
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle tool output"
     },
+    "app.transcript.prose": {
+      "$ref": "#/$defs/KeybindingValue",
+      "description": "Toggle prose-only mode"
+    },
     "app.thinking.toggle": {
       "$ref": "#/$defs/KeybindingValue",
       "description": "Toggle thinking blocks"

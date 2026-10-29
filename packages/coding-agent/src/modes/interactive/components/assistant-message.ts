@@ -14,6 +14,7 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 export class AssistantMessageComponent extends Container {
 	private contentContainer: Container;
 	private hideThinkingBlock: boolean;
+	private proseOnly = false;
 	private markdownTheme: MarkdownTheme;
 	private hiddenThinkingLabel: string;
 	private outputPad: number;
@@ -63,6 +64,13 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	/** Hide reasoning entirely without changing the normal view's collapse state. */
+	setProseOnly(proseOnly: boolean): void {
+		if (this.proseOnly === proseOnly) return;
+		this.proseOnly = proseOnly;
+		if (this.lastMessage) this.updateContent(this.lastMessage);
+	}
+
 	setHiddenThinkingLabel(label: string): void {
 		this.hiddenThinkingLabel = label;
 		if (this.lastMessage) {
@@ -96,7 +104,7 @@ export class AssistantMessageComponent extends Container {
 		this.contentContainer.clear();
 
 		const hasVisibleContent = message.content.some(
-			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
+			(c) => (c.type === "text" && c.text.trim()) || (!this.proseOnly && c.type === "thinking" && c.thinking.trim()),
 		);
 
 		if (hasVisibleContent) {
@@ -115,7 +123,7 @@ export class AssistantMessageComponent extends Container {
 						transform: createMarkdownTransform("assistant", this.isStreaming, this.markdownTransformers),
 					}),
 				);
-			} else if (content.type === "thinking") {
+			} else if (content.type === "thinking" && !this.proseOnly) {
 				const thinkingBlocks: string[] = [];
 				for (; i < message.content.length; i++) {
 					const thinkingContent = message.content[i];

@@ -35,7 +35,17 @@ export class StatusIndicator extends Loader {
 	}
 }
 
+export interface WorkingProgress {
+	startedAt: number;
+	toolCalls: number;
+	failedCalls: number;
+}
+
 export class WorkingStatusIndicator extends StatusIndicator {
+	private workingMessage: string;
+	private progress: WorkingProgress | undefined;
+	private progressTimer: ReturnType<typeof setInterval> | undefined;
+
 	constructor(ui: TUI, message: string, indicator?: WorkingIndicatorOptions, colorFn?: (text: string) => string) {
 		super(
 			"working",
@@ -45,6 +55,44 @@ export class WorkingStatusIndicator extends StatusIndicator {
 			message,
 			indicator,
 		);
+		this.workingMessage = message;
+	}
+
+	override setMessage(message: string): void {
+		this.workingMessage = message;
+		this.updateMessage();
+	}
+
+	setProgress(progress: WorkingProgress | undefined): void {
+		this.progress = progress;
+		if (progress && !this.progressTimer) {
+			// Update elapsed time even with a static or hidden spinner.
+			this.progressTimer = setInterval(() => this.updateMessage(), 1000);
+		} else if (!progress && this.progressTimer) {
+			clearInterval(this.progressTimer);
+			this.progressTimer = undefined;
+		}
+		this.updateMessage();
+	}
+
+	private updateMessage(): void {
+		if (!this.progress) {
+			super.setMessage(this.workingMessage);
+			return;
+		}
+		const { startedAt, toolCalls, failedCalls } = this.progress;
+		const seconds = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+		const elapsed = seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+		const failures = failedCalls > 0 ? ` · ${failedCalls} failed` : "";
+		super.setMessage(
+			`${this.workingMessage} · ${toolCalls} tool call${toolCalls === 1 ? "" : "s"} · ${elapsed}${failures}`,
+		);
+	}
+
+	override dispose(): void {
+		if (this.progressTimer) clearInterval(this.progressTimer);
+		this.progressTimer = undefined;
+		super.dispose();
 	}
 }
 

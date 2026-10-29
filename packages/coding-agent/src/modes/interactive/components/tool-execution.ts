@@ -45,6 +45,7 @@ export class ToolExecutionComponent extends Container {
 	private toolCallId: string;
 	private args: any;
 	private expanded = false;
+	private proseOnly = false;
 	private showImages: boolean;
 	private imageWidthCells: number;
 	private outputPad: number;
@@ -204,6 +205,11 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/** Keep live results and renderer state intact while hiding non-error tool rows. */
+	setProseOnly(proseOnly: boolean): void {
+		this.proseOnly = proseOnly;
+	}
+
 	setOutputPad(outputPad: number): void {
 		this.outputPad = outputPad;
 		this.updateDisplay();
@@ -225,7 +231,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		if (this.hideComponent) {
+		if (this.hideComponent || (this.proseOnly && !this.result?.isError)) {
 			return [];
 		}
 
@@ -258,6 +264,7 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<Container["handleMouse"]> {
+		if (this.hideComponent || (this.proseOnly && !this.result?.isError)) return undefined;
 		if (!this.hasRendererDefinition() || this.getRenderShell() !== "self") return super.handleMouse(event);
 		if (event.y <= 0 || event.y > this.selfRenderHeight) return undefined;
 		return this.selfRenderContainer.handleMouse({
