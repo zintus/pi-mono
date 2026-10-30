@@ -28,7 +28,6 @@ import { SettingsSchema } from "../src/core/settings-schema.ts";
 import { codemodeRenderers } from "../src/extensions/codemode/renderer.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
-import { keyHint } from "../src/modes/interactive/components/keybinding-hints.ts";
 import { type WorkingProgress, WorkingStatusIndicator } from "../src/modes/interactive/components/status-indicator.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { createInteractiveTui, InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
@@ -74,6 +73,8 @@ function tool(renderers?: ToolRenderers, toolName = "codemode"): ToolExecutionCo
 		"/tmp",
 	);
 }
+
+const toolNames = ["bash", "read", "write", "edit", "WaitForBash", "codemode", "custom_tool"];
 
 beforeEach(() => {
 	initTheme("dark");
@@ -215,37 +216,30 @@ describe("prose-only components", () => {
 		},
 	);
 
-	test.each([false, true])("failed WaitForBash occupies no rows and restores details (expanded=%s)", (expanded) => {
-		const component = tool(undefined, "WaitForBash");
-		component.setExpanded(expanded);
-		component.setProseOnly(true);
-		component.markExecutionStarted();
-		component.updateResult({ content: [{ type: "text", text: "partial output" }], isError: false }, true);
-		expect(component.render(100)).toEqual([]);
-		const result = { content: [{ type: "text", text: "Background bash completed; exit code 1." }], isError: true };
-		const snapshot = structuredClone(result);
-		component.updateResult(result);
-		component.invalidate();
-		expect(component.render(100)).toEqual([]);
-		component.setProseOnly(false);
-		const normal = component.render(100);
-		expect(text(component)).toContain("Background bash completed; exit code 1.");
-		component.setProseOnly(true);
-		expect(component.render(100)).toEqual([]);
-		component.setProseOnly(false);
-		expect(component.render(100)).toEqual(normal);
-		expect(result).toEqual(snapshot);
-	});
-
-	test("other failure notices use the configured prose shortcut", () => {
-		setKeybindings(new KeybindingsManager({ "app.transcript.prose": "ctrl+alt+o" }));
-		const component = tool(undefined, "read");
-		component.updateResult({ content: [], isError: true });
-		component.setProseOnly(true);
-		expect(text(component).trim()).toBe(
-			`read failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`,
-		);
-	});
+	test.each(toolNames.flatMap((toolName) => [false, true].map((expanded) => ({ toolName, expanded }))))(
+		"failed $toolName occupies no rows and restores details (expanded=$expanded)",
+		({ toolName, expanded }) => {
+			const component = tool(undefined, toolName);
+			component.setExpanded(expanded);
+			component.setProseOnly(true);
+			component.markExecutionStarted();
+			component.updateResult({ content: [{ type: "text", text: "partial output" }], isError: false }, true);
+			expect(component.render(100)).toEqual([]);
+			const result = { content: [{ type: "text", text: "Tool failed with exit code 1." }], isError: true };
+			const snapshot = structuredClone(result);
+			component.updateResult(result);
+			component.invalidate();
+			for (const width of [10, 40, 100]) expect(component.render(width)).toEqual([]);
+			component.setProseOnly(false);
+			const normal = component.render(100);
+			expect(text(component)).toContain("Tool failed with exit code 1.");
+			component.setProseOnly(true);
+			expect(component.render(100)).toEqual([]);
+			component.setProseOnly(false);
+			expect(component.render(100)).toEqual(normal);
+			expect(result).toEqual(snapshot);
+		},
+	);
 
 	test.each([false, true])("hidden tool details cannot receive clicks (isError=%s)", (isError) => {
 		const component = tool();
@@ -498,11 +492,7 @@ describe("prose-only interactive wiring", () => {
 		}
 	});
 
-	test.each(
-		[false, true].flatMap((isError) =>
-			["read", "WaitForBash", "codemode"].map((toolName) => ({ isError, toolName })),
-		),
-	)(
+	test.each([false, true].flatMap((isError) => toolNames.map((toolName) => ({ isError, toolName }))))(
 		"historical/rebuilt $toolName entries inherit prose mode without modifying saved messages (isError=$isError)",
 		({ isError, toolName }) => {
 			const ctx = context(true);
@@ -538,8 +528,7 @@ describe("prose-only interactive wiring", () => {
 			const rendered = text(ctx.chatContainer);
 			expect(rendered).toContain("Summary");
 			expect(rendered).not.toContain("result");
-			if (isError && toolName === "read") expect(rendered).toContain("read failed");
-			else expect(rendered.trim()).toBe("Summary");
+			expect(rendered.trim()).toBe("Summary");
 			ctx.chatContainer.clear();
 			ctx.renderSessionEntries(entries);
 			expect(text(ctx.chatContainer)).toBe(rendered);
@@ -550,7 +539,7 @@ describe("prose-only interactive wiring", () => {
 		},
 	);
 
-	test("streamed and direct tool starts stay hidden, update in place, and surface failures", async () => {
+	test("streamed and direct tool starts and failures stay hidden and update in place", async () => {
 		const ctx = context(true);
 		const message = assistant([{ type: "thinking", thinking: "reasoning" }]);
 		await ctx.handleEvent({ type: "message_start", message });
@@ -578,29 +567,26 @@ describe("prose-only interactive wiring", () => {
 		await ctx.handleEvent({ ...start, toolCallId: "direct" });
 		expect(ctx.pendingTools.get("direct")?.render(100)).toEqual([]);
 		await ctx.handleEvent({ ...end, toolCallId: "direct", isError: true });
-		expect(text(ctx.chatContainer)).toContain("read failed");
+		expect(text(ctx.chatContainer)).not.toContain("read failed");
 		expect(text(ctx.chatContainer)).not.toContain("tool output");
 		ctx.toggleProseOnly();
 		expect(text(ctx.chatContainer)).not.toContain("partial");
 		expect(text(ctx.chatContainer)).toContain("tool output");
 	});
 
-	test.each(["WaitForBash", "codemode"])(
-		"live %s failures stay hidden until prose mode is disabled",
-		async (toolName) => {
-			const ctx = context(true);
-			await ctx.handleEvent({ ...start, toolName });
-			const pending = ctx.pendingTools.get("call");
-			await ctx.handleEvent({ ...end, toolName, isError: true });
-			expect(pending?.render(100)).toEqual([]);
-			expect(text(ctx.chatContainer).trim()).toBe("");
-			ctx.toggleProseOnly();
-			expect(text(ctx.chatContainer)).toContain("tool output");
-			ctx.toggleProseOnly();
-			expect(pending?.render(100)).toEqual([]);
-			expect(text(ctx.chatContainer).trim()).toBe("Prose-only mode: on");
-		},
-	);
+	test.each(toolNames)("live %s failures stay hidden until prose mode is disabled", async (toolName) => {
+		const ctx = context(true);
+		await ctx.handleEvent({ ...start, toolName });
+		const pending = ctx.pendingTools.get("call");
+		await ctx.handleEvent({ ...end, toolName, isError: true });
+		expect(pending?.render(100)).toEqual([]);
+		expect(text(ctx.chatContainer).trim()).toBe("");
+		ctx.toggleProseOnly();
+		expect(text(ctx.chatContainer)).toContain("tool output");
+		ctx.toggleProseOnly();
+		expect(pending?.render(100)).toEqual([]);
+		expect(text(ctx.chatContainer).trim()).toBe("Prose-only mode: on");
+	});
 
 	test("approval dialogs remain visible and answerable in prose mode", async () => {
 		const ctx = context(true);
@@ -629,6 +615,7 @@ describe("prose-only interactive wiring", () => {
 			await ctx.handleEvent({ ...end, isError: true });
 			expect(refresh).toHaveBeenCalledTimes(2);
 			expect(text(ctx.editor)).toContain("1 tool call · 0s · 1 failed");
+			expect(text(ctx.chatContainer)).not.toContain("read failed");
 		} finally {
 			ctx.clearStatusIndicator();
 		}
