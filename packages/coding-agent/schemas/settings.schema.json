@@ -203,6 +203,11 @@
       "type": "boolean",
       "default": false
     },
+    "proseOnly": {
+      "type": "boolean",
+      "description": "Start interactive mode with thinking and tool details hidden. Alt+O toggles for this process only.",
+      "default": true
+    },
     "showCacheMissNotices": {
       "type": "boolean",
       "description": "Show cache cost and provider recovery notices.",

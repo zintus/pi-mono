@@ -11,9 +11,11 @@ import {
 	type TuiMouseEvent,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
+import { Compile } from "typebox/compile";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AgentSessionEvent } from "../src/core/agent-session.ts";
+import type { AgentSessionRuntime } from "../src/core/agent-session-runtime.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createEventBus } from "../src/core/event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory } from "../src/core/extensions/loader.ts";
@@ -21,6 +23,8 @@ import { ExtensionRunner } from "../src/core/extensions/runner.ts";
 import type { ToolRenderers } from "../src/core/extensions/types.ts";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { type SessionEntry, SessionManager } from "../src/core/session-manager.ts";
+import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
+import { SettingsSchema } from "../src/core/settings-schema.ts";
 import { codemodeRenderers } from "../src/extensions/codemode/renderer.ts";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.ts";
 import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
@@ -337,6 +341,81 @@ const end: AgentSessionEvent = {
 	result: { content: [{ type: "text", text: "tool output" }], details: undefined },
 	isError: false,
 };
+
+describe("prose-only startup setting", () => {
+	test("schema and runtime default to prose, and require a boolean when configured", () => {
+		const validator = Compile(SettingsSchema);
+		expect(SettingsSchema.properties.proseOnly).toMatchObject({ default: true });
+		expect(SettingsManager.inMemory().getProseOnly()).toBe(true);
+		for (const proseOnly of [false, true]) {
+			expect(validator.Check({ proseOnly })).toBe(true);
+			expect(SettingsManager.inMemory({ proseOnly }).getProseOnly()).toBe(proseOnly);
+		}
+		for (const proseOnly of ["yes", "false", 1, null]) {
+			expect(validator.Check({ proseOnly })).toBe(false);
+		}
+	});
+
+	test.each([false, true])("trusted project settings override global proseOnly=%s", (proseOnly) => {
+		const storage = new InMemorySettingsStorage();
+		storage.withLock("global", () => JSON.stringify({ proseOnly }));
+		storage.withLock("project", () => JSON.stringify({ proseOnly: !proseOnly }));
+		expect(SettingsManager.fromStorage(storage).getProseOnly()).toBe(!proseOnly);
+		expect(SettingsManager.fromStorage(storage, { projectTrusted: false }).getProseOnly()).toBe(proseOnly);
+	});
+
+	test.each([undefined, false, true])(
+		"initializes transcript and footer from proseOnly=%s without saving toggles",
+		(proseOnly) => {
+			const settingsManager = SettingsManager.inMemory({ proseOnly, hideThinkingBlock: false, theme: "dark" });
+			const snapshot = settingsManager.getSettings();
+			const runtime = {
+				session: {
+					settingsManager,
+					sessionManager: SessionManager.inMemory("/tmp"),
+					resourceLoader: { getThemes: () => ({ themes: [] }) },
+					extensionRunner: { getMarkdownTransformers: () => [], resolveToolRenderers: () => undefined },
+					getContextUsage: () => undefined,
+					state: {},
+					autoCompactionEnabled: true,
+				},
+				setBeforeSessionInvalidate: vi.fn(),
+				setRebindSession: vi.fn(),
+			} as unknown as AgentSessionRuntime;
+			const keybindings = vi.spyOn(KeybindingsManager, "create").mockReturnValue(new KeybindingsManager());
+			const mode = new InteractiveMode(runtime, { terminal: new VirtualTerminal(100, 24) });
+			const view = mode as unknown as {
+				chatContainer: Container;
+				footer: { render(width: number): string[] };
+				defaultEditor: CustomEditor;
+				setupKeyHandlers(): void;
+				renderSessionItems(items: AgentMessage[]): void;
+			};
+			try {
+				view.renderSessionItems([
+					assistant(
+						[{ type: "thinking", thinking: "reasoning" }, { type: "text", text: "Summary" }, call],
+						"toolUse",
+					),
+				]);
+				const enabled = proseOnly ?? true;
+				expect(text(view.chatContainer)).toContain("Summary");
+				expect(text(view.chatContainer).includes("reasoning")).toBe(!enabled);
+				expect(text(view.chatContainer).includes("notes.txt")).toBe(!enabled);
+				expect(text(view.footer).includes("prose only")).toBe(enabled);
+				view.setupKeyHandlers();
+				view.defaultEditor.handleInput("\x1bo");
+				expect(text(view.chatContainer).includes("reasoning")).toBe(enabled);
+				expect(text(view.chatContainer).includes("notes.txt")).toBe(enabled);
+				expect(text(view.footer).includes("prose only")).toBe(!enabled);
+				expect(settingsManager.getSettings()).toEqual(snapshot);
+			} finally {
+				mode.stop();
+				keybindings.mockRestore();
+			}
+		},
+	);
+});
 
 describe("prose-only interactive wiring", () => {
 	test("Alt+O toggles existing content without losing tool identity or changing normal collapse settings", () => {

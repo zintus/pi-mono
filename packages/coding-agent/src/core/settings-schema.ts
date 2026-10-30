@@ -243,6 +243,13 @@ export const SettingsSchema = Type.Object(
 		branchSummary: Type.Optional(BranchSummarySettingsSchema),
 		retry: Type.Optional(RetrySettingsSchema),
 		hideThinkingBlock: Type.Optional(Type.Boolean({ default: SETTINGS_DEFAULTS.hideThinkingBlock })),
+		proseOnly: Type.Optional(
+			Type.Boolean({
+				description:
+					"Start interactive mode with thinking and tool details hidden. Alt+O toggles for this process only.",
+				default: SETTINGS_DEFAULTS.proseOnly,
+			}),
+		),
 		showCacheMissNotices: Type.Optional(
 			Type.Boolean({
 				description: "Show cache cost and provider recovery notices.",

@@ -515,7 +515,7 @@ export class InteractiveMode {
 	private toolOutputExpanded = false;
 
 	// Display-only; never changes session messages or the normal view's collapse state.
-	private proseOnly = false;
+	private proseOnly: boolean;
 	private workingProgress: WorkingProgress | undefined;
 
 	// Thinking block visibility state
@@ -666,7 +666,9 @@ export class InteractiveMode {
 		this.footerContainer = new Container();
 		this.footerContainer.addChild(this.footer);
 
-		// Load hide thinking block setting
+		// Load initial display settings. Prose shortcuts override the startup setting for this process only.
+		this.proseOnly = this.settingsManager.getProseOnly();
+		this.footer.setProseOnly(this.proseOnly);
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
 		this.outputPad = this.settingsManager.getOutputPad();
 

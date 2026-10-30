@@ -20,13 +20,13 @@ To include files or images:
 
 ## Follow Pi's work
 
-Pi shows each tool call and result while it works. Press `Ctrl+O` to expand or collapse tool output. Press `Ctrl+T` to show or hide thinking blocks.
+Pi starts in **prose-only mode** by default. Set `"proseOnly": false` in [settings.json](settings.md#terminal-and-display) and restart Pi to start in the normal view instead.
 
-Press `Alt+O` for **prose-only mode**: keep your messages and assistant text, but hide thinking (including its placeholder) and tool details, including codemode scripts, nested calls, results, and tool images—even when a tool fails. Failed tools show a compact notice with a shortcut hint to leave prose mode and inspect the details. Warnings, approval dialogs, and commands you run with `!` remain visible. The built-in footer shows `prose only` while enabled.
+Prose-only mode lets you keep your messages and assistant text, but hide thinking (including its placeholder) and tool details, including codemode scripts, nested calls, results, and tool images—even when a tool fails. Failed tools show a compact notice with a shortcut hint to leave prose mode and inspect the details. Warnings, approval dialogs, and commands you run with `!` remain visible. The built-in footer shows `prose only` while enabled.
 
-Press `Alt+O` again to restore the normal view and its previous collapse states, even during a running tool. In prose mode the working indicator above the input shows tool-call count, elapsed time, and failed calls when nonzero (for example, `Working · 14 tool calls · 1m 23s`). Counts include codemode and its nested calls, accumulate across retries and compaction, and reset for the next request after the agent settles. A failed call does not necessarily mean the task failed.
+Press `Alt+O` to switch between prose-only mode and the normal view, restoring its previous collapse states even during a running tool. In the normal view, `Ctrl+O` expands or collapses tool output and `Ctrl+T` shows or hides thinking blocks. In prose mode the working indicator above the input shows tool-call count, elapsed time, and failed calls when nonzero (for example, `Working · 14 tool calls · 1m 23s`). Counts include codemode and its nested calls, accumulate across retries and compaction, and reset for the next request after the agent settles. A failed call does not necessarily mean the task failed.
 
-This is a display-only toggle for the current Pi process; it does not change reasoning effort, model context, saved history, or exports. On macOS, the terminal must send Option as Alt. Rebind `app.transcript.prose` in [Keybindings](keybindings.md) if needed.
+The shortcut is a display-only toggle for the current Pi process and does not save the startup setting; it does not change reasoning effort, model context, saved history, or exports. On macOS, the terminal must send Option as Alt. Rebind `app.transcript.prose` in [Keybindings](keybindings.md) if needed.
 
 The startup header lists the instructions and resources Pi loaded. The editor border indicates the current thinking level. The footer updates as the model uses context and reports usage.
 
