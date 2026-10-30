@@ -232,9 +232,9 @@ export class ToolExecutionComponent extends Container {
 
 	override render(width: number): string[] {
 		if (this.proseOnly) {
-			if (!this.result?.isError) return [];
-			// A failed script can include successful output, nested calls and images.
-			// Keep the failure visible without revealing any of those tool details.
+			// Orchestration failures are noise in prose; their details remain in the normal view.
+			if (!this.result?.isError || this.toolName === "WaitForBash" || this.toolName === "codemode") return [];
+			// Keep other failures visible without revealing tool details.
 			const notice = `${theme.fg("error", `${this.toolName} failed`)} · ${keyHint("app.transcript.prose", "to show details")}`;
 			return ["", ...new Text(notice, this.outputPad, 0).render(width)];
 		}

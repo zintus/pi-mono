@@ -63,9 +63,9 @@ function text(component: { render(width: number): string[] }, width = 100): stri
 	return stripAnsi(component.render(width).join("\n"));
 }
 
-function tool(renderers?: ToolRenderers): ToolExecutionComponent {
+function tool(renderers?: ToolRenderers, toolName = "codemode"): ToolExecutionComponent {
 	return new ToolExecutionComponent(
-		"codemode",
+		toolName,
 		"call",
 		{ code: 'text("script output");' },
 		{},
@@ -137,7 +137,7 @@ describe("prose-only components", () => {
 			renderers: { renderShell: "self", renderCall: () => new Text("custom tool") },
 		},
 	] satisfies { label: string; renderers: ToolRenderers | undefined }[])(
-		"hides entire $label rows, preserves live state, and shows errors",
+		"hides entire $label codemode rows including failures and preserves live state",
 		({ renderers }) => {
 			const component = tool(renderers);
 			component.setExpanded(true);
@@ -159,9 +159,7 @@ describe("prose-only components", () => {
 			expect(result).toEqual(snapshot);
 			component.setProseOnly(true);
 			component.updateResult({ content: [{ type: "text", text: "permission denied" }], isError: true });
-			expect(text(component).trim()).toBe(
-				`codemode failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`,
-			);
+			expect(component.render(80)).toEqual([]);
 			expect(text(component)).not.toContain("permission denied");
 			component.setProseOnly(false);
 			expect(text(component)).toContain("permission denied");
@@ -198,12 +196,8 @@ describe("prose-only components", () => {
 				expect(component.render(100)).toEqual([]);
 				component.updateResult(result);
 				component.invalidate();
-				const summary = `codemode failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`;
-				expect(text(component).trim()).toBe(summary);
+				for (const width of [10, 40, 100]) expect(component.render(width)).toEqual([]);
 				expect(imageRender).not.toHaveBeenCalled();
-				for (const width of [10, 40, 100]) {
-					for (const line of component.render(width)) expect(visibleWidth(line)).toBeLessThanOrEqual(width);
-				}
 				component.setProseOnly(false);
 				const normal = component.render(100);
 				expect(text(component)).toContain('text("script output");');
@@ -211,7 +205,7 @@ describe("prose-only components", () => {
 				expect(text(component)).toContain("large partial output");
 				expect(imageRender).toHaveBeenCalled();
 				component.setProseOnly(true);
-				expect(text(component).trim()).toBe(summary);
+				expect(component.render(100)).toEqual([]);
 				component.setProseOnly(false);
 				expect(component.render(100)).toEqual(normal);
 				expect(result).toEqual(snapshot);
@@ -221,13 +215,35 @@ describe("prose-only components", () => {
 		},
 	);
 
-	test("failure notices use the configured prose shortcut", () => {
+	test.each([false, true])("failed WaitForBash occupies no rows and restores details (expanded=%s)", (expanded) => {
+		const component = tool(undefined, "WaitForBash");
+		component.setExpanded(expanded);
+		component.setProseOnly(true);
+		component.markExecutionStarted();
+		component.updateResult({ content: [{ type: "text", text: "partial output" }], isError: false }, true);
+		expect(component.render(100)).toEqual([]);
+		const result = { content: [{ type: "text", text: "Background bash completed; exit code 1." }], isError: true };
+		const snapshot = structuredClone(result);
+		component.updateResult(result);
+		component.invalidate();
+		expect(component.render(100)).toEqual([]);
+		component.setProseOnly(false);
+		const normal = component.render(100);
+		expect(text(component)).toContain("Background bash completed; exit code 1.");
+		component.setProseOnly(true);
+		expect(component.render(100)).toEqual([]);
+		component.setProseOnly(false);
+		expect(component.render(100)).toEqual(normal);
+		expect(result).toEqual(snapshot);
+	});
+
+	test("other failure notices use the configured prose shortcut", () => {
 		setKeybindings(new KeybindingsManager({ "app.transcript.prose": "ctrl+alt+o" }));
-		const component = tool();
+		const component = tool(undefined, "read");
 		component.updateResult({ content: [], isError: true });
 		component.setProseOnly(true);
 		expect(text(component).trim()).toBe(
-			`codemode failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`,
+			`read failed · ${stripAnsi(keyHint("app.transcript.prose", "to show details"))}`,
 		);
 	});
 
@@ -482,9 +498,13 @@ describe("prose-only interactive wiring", () => {
 		}
 	});
 
-	test.each([false, true])(
-		"historical/rebuilt entries inherit prose mode without modifying saved messages (isError=%s)",
-		(isError) => {
+	test.each(
+		[false, true].flatMap((isError) =>
+			["read", "WaitForBash", "codemode"].map((toolName) => ({ isError, toolName })),
+		),
+	)(
+		"historical/rebuilt $toolName entries inherit prose mode without modifying saved messages (isError=$isError)",
+		({ isError, toolName }) => {
 			const ctx = context(true);
 			const entries: SessionEntry[] = [
 				{
@@ -495,7 +515,7 @@ describe("prose-only interactive wiring", () => {
 					message: assistant([
 						{ type: "thinking", thinking: "reasoning" },
 						{ type: "text", text: "Summary" },
-						call,
+						{ ...call, name: toolName },
 					]),
 				},
 				{
@@ -506,7 +526,7 @@ describe("prose-only interactive wiring", () => {
 					message: {
 						role: "toolResult",
 						toolCallId: "call",
-						toolName: "read",
+						toolName,
 						content: [{ type: "text", text: "result" }],
 						isError,
 						timestamp: 0,
@@ -518,7 +538,7 @@ describe("prose-only interactive wiring", () => {
 			const rendered = text(ctx.chatContainer);
 			expect(rendered).toContain("Summary");
 			expect(rendered).not.toContain("result");
-			if (isError) expect(rendered).toContain("read failed");
+			if (isError && toolName === "read") expect(rendered).toContain("read failed");
 			else expect(rendered.trim()).toBe("Summary");
 			ctx.chatContainer.clear();
 			ctx.renderSessionEntries(entries);
@@ -564,6 +584,23 @@ describe("prose-only interactive wiring", () => {
 		expect(text(ctx.chatContainer)).not.toContain("partial");
 		expect(text(ctx.chatContainer)).toContain("tool output");
 	});
+
+	test.each(["WaitForBash", "codemode"])(
+		"live %s failures stay hidden until prose mode is disabled",
+		async (toolName) => {
+			const ctx = context(true);
+			await ctx.handleEvent({ ...start, toolName });
+			const pending = ctx.pendingTools.get("call");
+			await ctx.handleEvent({ ...end, toolName, isError: true });
+			expect(pending?.render(100)).toEqual([]);
+			expect(text(ctx.chatContainer).trim()).toBe("");
+			ctx.toggleProseOnly();
+			expect(text(ctx.chatContainer)).toContain("tool output");
+			ctx.toggleProseOnly();
+			expect(pending?.render(100)).toEqual([]);
+			expect(text(ctx.chatContainer).trim()).toBe("Prose-only mode: on");
+		},
+	);
 
 	test("approval dialogs remain visible and answerable in prose mode", async () => {
 		const ctx = context(true);
