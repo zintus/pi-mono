@@ -6,6 +6,8 @@ const openAIExplicitRetryMessage =
 	"An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message.";
 const bedrockExplicitRetryMessage =
 	'{"message":"The system encountered an unexpected error during processing. Try your request again."}';
+const mantleTargetRejectionMessage =
+	"Validation error: The model returned the following errors: Mantle streaming error for requestId 00000000-0000-4000-8000-000000000001: The task request was rejected by the target";
 const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total request limit reached (288/48)";
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
@@ -32,6 +34,42 @@ describe("provider retry classification", () => {
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: nvidiaNIMResourceExhaustedMessage }),
 			),
 		).toBe(true);
+	});
+
+	it.each([
+		mantleTargetRejectionMessage,
+		"Mantle streaming error for requestId 00000000-0000-4000-8000-000000000002: The task request was rejected by the target",
+		"Mantle streaming error: The task request was rejected by the target",
+		JSON.stringify({ message: mantleTargetRejectionMessage.toUpperCase() }),
+	])("matches Mantle target rejection despite validation wrappers: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(true);
+	});
+
+	it.each([
+		"Validation error: This model doesn't support the image field for user messages. Remove image and try again.",
+		"Validation error: Invocation of model ID example with on-demand throughput isn't supported. Retry your request with the ID or ARN of an inference profile that contains this model.",
+		"Validation error: The number of toolResult blocks at messages.46.content exceeds the number of toolUse blocks of previous turn.",
+		"Validation error: The model returned the following errors: Invalid max_tokens value",
+		"Mantle streaming error for requestId 00000000-0000-4000-8000-000000000001: Invalid request parameters",
+		"Validation error: The task request was rejected by the target",
+	])("keeps other validation errors non-retryable: %s", (errorMessage) => {
+		expect(isRetryableAssistantError(fauxAssistantMessage("", { stopReason: "error", errorMessage }))).toBe(false);
+	});
+
+	it("keeps Mantle aborts and quota errors non-retryable", () => {
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "aborted", errorMessage: mantleTargetRejectionMessage }),
+			),
+		).toBe(false);
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", {
+					stopReason: "error",
+					errorMessage: `${mantleTargetRejectionMessage}: quota exceeded`,
+				}),
+			),
+		).toBe(false);
 	});
 
 	it("matches Bun fetch socket drop wording", () => {

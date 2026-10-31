@@ -4,6 +4,11 @@ import { Type } from "typebox";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, type Harness } from "./harness.ts";
 
+const transientErrors = [
+	"overloaded_error",
+	"Validation error: The model returned the following errors: Mantle streaming error for requestId 00000000-0000-4000-8000-000000000001: The task request was rejected by the target",
+];
+
 function normalizeEventOrder(events: Harness["events"]): string[] {
 	const normalized: string[] = [];
 	for (const event of events) {
@@ -30,7 +35,7 @@ describe("AgentSession retry and event characterization", () => {
 		}
 	});
 
-	it("retries after a transient error and succeeds", async () => {
+	it.each(transientErrors)("retries after a transient error and succeeds: %s", async (errorMessage) => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } } });
 		harnesses.push(harness);
 		const retryEvents: string[] = [];
@@ -40,7 +45,7 @@ describe("AgentSession retry and event characterization", () => {
 		});
 
 		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage }),
 			fauxAssistantMessage("recovered"),
 		]);
 
@@ -99,7 +104,7 @@ describe("AgentSession retry and event characterization", () => {
 		});
 	});
 
-	it("exhausts max retries and emits a failure event", async () => {
+	it.each(transientErrors)("exhausts max retries and emits a failure event: %s", async (errorMessage) => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 2, baseDelayMs: 1 } } });
 		harnesses.push(harness);
 		const retryEvents: string[] = [];
@@ -109,9 +114,9 @@ describe("AgentSession retry and event characterization", () => {
 		});
 
 		harness.setResponses([
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
-			fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage }),
+			fauxAssistantMessage("", { stopReason: "error", errorMessage }),
 		]);
 
 		await harness.session.prompt("test");
@@ -147,10 +152,10 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.session.isRetrying).toBe(false);
 	});
 
-	it("does not retry when retry is disabled", async () => {
+	it.each(transientErrors)("does not retry when retry is disabled: %s", async (errorMessage) => {
 		const harness = await createHarness({ settings: { retry: { enabled: false } } });
 		harnesses.push(harness);
-		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })]);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage })]);
 
 		await harness.session.prompt("test");
 

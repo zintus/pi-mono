@@ -59,6 +59,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"upstream_stream_read_error",
 	"stream was interrupted",
 	"http/?2 stream failed",
+	// Bedrock wraps Mantle target rejections in ValidationException (HTTP 400).
+	// Match this backend failure, not validation errors or arbitrary Mantle errors.
+	"\\bMantle streaming error(?: for requestId [^:\\r\\n]+)?:\\s*The task request was rejected by the target\\b",
 
 	// Network, proxy, and fetch transport failures. This includes OpenAI Codex
 	// raw-fetch failures such as "upstream connect", "connection refused", and
