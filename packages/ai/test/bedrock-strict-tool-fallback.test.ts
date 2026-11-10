@@ -104,6 +104,12 @@ function run(tools: Tool[], onPayload?: (payload: unknown) => unknown, options: 
 	).result();
 }
 
+function strictFlags(): (boolean | undefined)[][] {
+	return (bedrockMock.inputs as CommandInput[]).map((input) =>
+		input.toolConfig.tools.map((tool) => tool.toolSpec.strict),
+	);
+}
+
 // Regression tests for https://github.com/earendil-works/pi/issues/11416.
 describe("Bedrock preferred strict tool fallback", () => {
 	beforeEach(() => {
@@ -212,5 +218,46 @@ describe("Bedrock preferred strict tool fallback", () => {
 
 		expect(result.stopReason).toBe("error");
 		expect(bedrockMock.inputs).toHaveLength(2);
+	});
+
+	it("does not remember a rejection without a session", async () => {
+		bedrockMock.respond = (attempt) =>
+			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+
+		await run([tool("preferred", "prefer")]);
+		await run([tool("preferred", "prefer")]);
+
+		expect(strictFlags()).toEqual([[true], [undefined], [true]]);
+	});
+
+	// Regression tests for https://github.com/earendil-works/pi/issues/11626.
+	it("sends preferred tools non-strict right away on later requests of a rejected session", async () => {
+		bedrockMock.respond = (attempt) =>
+			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+		const tools = [tool("preferred", "prefer"), tool("required", "require")];
+
+		await run(tools, undefined, { sessionId: "rejected" });
+		const second = await run(tools, undefined, { sessionId: "rejected" });
+		await run(tools, undefined, { sessionId: "other" });
+
+		expect(second.stopReason).toBe("stop");
+		expect(second.diagnostics).toBeUndefined();
+		expect(strictFlags()).toEqual([
+			[true, true],
+			[undefined, true],
+			[undefined, true],
+			[true, true],
+		]);
+	});
+
+	it("tries strict sampling again after the session's resources are cleaned up", async () => {
+		bedrockMock.respond = (attempt) =>
+			attempt === 1 ? Promise.reject(sdkError("ValidationException", unionLimitMessage)) : successResponse();
+
+		await run([tool("preferred", "prefer")], undefined, { sessionId: "cleaned" });
+		cleanupSessionResources("cleaned");
+		await run([tool("preferred", "prefer")], undefined, { sessionId: "cleaned" });
+
+		expect(strictFlags()).toEqual([[true], [undefined], [true]]);
 	});
 });

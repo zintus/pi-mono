@@ -54,6 +54,8 @@ export interface RpcCommandHandlerContext {
 	output(obj: RpcResponse | RpcExtensionUIRequest | object): void;
 	success<T extends RpcCommand["type"]>(id: string | undefined, command: T, data?: object | null): RpcResponse;
 	error(id: string | undefined, command: string, message: string): RpcResponse;
+	/** Keep the transport alive until an asynchronous prompt settles. Returns its completion callback. */
+	onPromptStart?(): () => void;
 }
 
 export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
@@ -71,6 +73,8 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 				// Start prompt handling immediately, but emit the authoritative response only after
 				// prompt preflight succeeds. Queued and immediately handled prompts also count as success.
 				let preflightSucceeded = false;
+				// Extension commands run inside prompt(); defer shutdown requests until it settles.
+				const onPromptEnd = context.onPromptStart?.();
 				void session
 					.prompt(command.message, {
 						images: command.images,
@@ -85,7 +89,8 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 						if (!preflightSucceeded) {
 							output(error(id, "prompt", e.message));
 						}
-					});
+					})
+					.finally(() => onPromptEnd?.());
 				return undefined;
 			}
 
@@ -444,10 +449,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		{ resolve: (value: any) => void; reject: (error: Error) => void }
 	>();
 
-	// Shutdown request flag
+	// Extension shutdown requests wait until input is attached, commands have settled, and the session is idle.
 	let shutdownRequested = false;
 	let shuttingDown = false;
-	const signalCleanupHandlers: Array<() => void> = [];
+	let inputReady = false;
+	let activeCommands = 0;
+	// Only a repeated signal forces exit during shutdown.
+	let signalCount = 0;
 
 	/** Helper for dialog methods with signal/timeout support */
 	function createDialogPromise<T>(
@@ -719,6 +727,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			},
 			shutdownHandler: () => {
 				shutdownRequested = true;
+				// Let the requesting handler finish, including when no further input arrives.
+				setImmediate(checkShutdownRequested);
 			},
 			onError: (err) => {
 				output({
@@ -750,12 +760,17 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 
 		for (const signal of signals) {
-			const handler = () => {
+			const exitCode = signal === "SIGHUP" ? 129 : 143;
+			// Keep listeners during disposal: EOF and a single signal can arrive together.
+			process.on(signal, () => {
+				signalCount++;
 				killTrackedDetachedChildren();
-				void shutdown(signal === "SIGHUP" ? 129 : 143, signal);
-			};
-			process.on(signal, handler);
-			signalCleanupHandlers.push(() => process.off(signal, handler));
+				if (!shuttingDown) {
+					void shutdown(exitCode, signal);
+				} else if (signalCount > 1) {
+					process.exit(exitCode);
+				}
+			});
 		}
 	};
 
@@ -769,22 +784,21 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		output,
 		success,
 		error,
+		onPromptStart: () => {
+			activeCommands++;
+			return () => {
+				activeCommands--;
+				checkShutdownRequested();
+			};
+		},
 	});
 
-	/**
-	 * Check if shutdown was requested and perform shutdown if so.
-	 * Called after handling each command when waiting for the next command.
-	 */
 	let detachInput = () => {};
 
-	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<never> {
-		if (shuttingDown) {
-			process.exit(exitCode);
-		}
+	/** Dispose the runtime and exit. Runs once; later calls (stdin EOF after a signal) do nothing. */
+	async function shutdown(exitCode = 0, signal?: NodeJS.Signals): Promise<void> {
+		if (shuttingDown) return;
 		shuttingDown = true;
-		for (const cleanup of signalCleanupHandlers) {
-			cleanup();
-		}
 		unsubscribe?.();
 		unsubscribeBackpressure?.();
 		await runtimeHost.dispose();
@@ -796,9 +810,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		process.exit(exitCode);
 	}
 
-	async function checkShutdownRequested(): Promise<void> {
-		if (!shutdownRequested) return;
-		await shutdown();
+	/**
+	 * Shut down if an extension requested it and nothing still needs the process: input is attached,
+	 * no command (including a prompt that has not settled) is being handled, and the session is idle.
+	 * Each of those ending calls this again.
+	 */
+	function checkShutdownRequested(): void {
+		if (!shutdownRequested || shuttingDown || !inputReady || activeCommands > 0 || !session.isIdle) return;
+		void shutdown();
 	}
 
 	const handleInputLine = async (line: string) => {
@@ -834,13 +853,19 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 
 		const command = parsed as RpcCommand;
+		activeCommands++;
 		try {
-			const response = await handleCommand(command);
+			let response: RpcResponse | undefined;
+			try {
+				response = await handleCommand(command);
+			} finally {
+				activeCommands--;
+			}
 			if (response) {
 				output(response);
 				await waitForRawStdoutBackpressure();
 			}
-			await checkShutdownRequested();
+			checkShutdownRequested();
 		} catch (commandError: unknown) {
 			output(
 				error(
@@ -867,6 +892,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			process.stdin.off("end", onInputEnd);
 		};
 	})();
+	inputReady = true;
+	// Handle a shutdown requested during startup (e.g. from session_start).
+	checkShutdownRequested();
 
 	// Keep process alive forever
 	return new Promise(() => {});
