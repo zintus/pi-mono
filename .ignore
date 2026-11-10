@@ -1,0 +1,4 @@
+# Generated or minified artifacts; search the readable sources instead.
+/apps/p3/docs/coding-flow/index.html
+/packages/coding-agent/examples/extensions/doom-overlay/doom/build/doom.js
+/packages/coding-agent/src/core/export-html/vendor/marked.min.js
