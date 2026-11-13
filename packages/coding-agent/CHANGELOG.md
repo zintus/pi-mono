@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `pi --build-info` prints the version, build-time Git commit, and dirty flag as JSON without changing the plain `--version` output.
+
+### Fixed
+
+- Built-in compaction now automatically steps reasoning down after each pair of consecutive output-token-limit failures, through the lowest supported level, without changing normal chat settings or persisting truncated summaries.
+- Backported the read-stream fix from upstream `ef9361ab7`: cancelling a read while its file is opening no longer crashes Pi with an unhandled `AbortError` ([#11956](https://github.com/earendil-works/pi/issues/11956)).
+
 ## [1.5.2] - 2026-11-10
 
 ### New Features

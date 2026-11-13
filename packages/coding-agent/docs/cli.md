@@ -246,6 +246,8 @@ See [Configuration](configuration.md) for saved configuration, [Security](securi
   Shows help, including flags registered by loaded extensions, then exits.
 - `-v`, `--version`<br>
   Shows the Pi version, then exits.
+- `--build-info`<br>
+  Prints JSON with `version`, the full `gitCommit`, and `dirty` (whether the build included uncommitted or untracked files), then exits. The commit and dirty flag are captured during the build and travel with packaged and standalone binaries; they do not describe the current working directory. Source runs and builds without Git metadata report `null` for `gitCommit` and `dirty`. `--version` remains a plain version number for scripts and update checks.
 
 Extensions may register additional long-form options. Unknown short options are rejected.
 

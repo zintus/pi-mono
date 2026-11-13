@@ -9,6 +9,7 @@ import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import { setCapabilityOverrides } from "@earendil-works/pi-tui";
 import chalk from "chalk";
+import { BUILD_INFO } from "./build-info.ts";
 import { type Args, type Mode, normalizeSessionName, parseArgs, printHelp } from "./cli/args.ts";
 import {
 	type AuthCheckResult,
@@ -696,6 +697,11 @@ export async function main(args: string[], options?: MainOptions) {
 		}
 	}
 	time("parseArgs");
+
+	if (parsed.buildInfo) {
+		console.log(JSON.stringify({ version: VERSION, ...BUILD_INFO }, null, 2));
+		process.exit(0);
+	}
 
 	if (parsed.version) {
 		console.log(VERSION);

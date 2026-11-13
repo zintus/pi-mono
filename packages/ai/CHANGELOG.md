@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `retryAssistantCall()` accepts an optional retry classifier that returns a retry message for caller-specific failures, such as truncated summaries, while preserving the original response and cancellation behavior.
+
 ## [1.5.2] - 2026-11-10
 
 ### Fixed

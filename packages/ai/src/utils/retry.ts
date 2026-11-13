@@ -221,6 +221,10 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
  *   the retried call starts, and `onRetryFinished` once at the end (whether the loop
  *   ends in success, exhausted retries, or an aborted backoff).
  *
+ * `getRetryError` may classify additional responses (such as truncated summaries)
+ * as retryable by returning their retry message. Return undefined to stop retrying.
+ * Without it, only transient provider errors are retried.
+ *
  * When `policy` is undefined or disabled, the first response is returned unchanged
  * (equivalent to calling `produce()` directly).
  */
@@ -229,6 +233,8 @@ export async function retryAssistantCall(
 	policy: RetryPolicy | undefined,
 	signal: AbortSignal | undefined,
 	callbacks?: RetryCallbacks,
+	getRetryError: (response: AssistantMessage) => string | undefined = (response) =>
+		isRetryableAssistantError(response) ? response.errorMessage || "Unknown error" : undefined,
 ): Promise<AssistantMessage> {
 	const maxAttempts = policy?.enabled ? policy.maxRetries : 0;
 
@@ -243,20 +249,22 @@ export async function retryAssistantCall(
 			return response;
 		}
 
-		// Success: non-error, non-abort responses return as-is.
-		if (response.stopReason !== "error") {
+		const retryError = getRetryError(response);
+		// Truncated output is not successful, even when the caller cannot retry it.
+		if (response.stopReason !== "error" && response.stopReason !== "length" && retryError === undefined) {
 			if (lastRetry) await callbacks?.onRetryFinished?.(true, lastRetry.attempt);
 			return response;
 		}
 
-		// Non-retryable, or budget exhausted: return the final error message.
-		if (attempt >= maxAttempts || !isRetryableAssistantError(response)) {
-			if (lastRetry) await callbacks?.onRetryFinished?.(false, lastRetry.attempt, response.errorMessage);
+		// Non-retryable, or budget exhausted: return the original response.
+		if (attempt >= maxAttempts || retryError === undefined) {
+			if (lastRetry)
+				await callbacks?.onRetryFinished?.(false, lastRetry.attempt, retryError ?? response.errorMessage);
 			return response;
 		}
 
 		attempt++;
-		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
+		lastRetry = { attempt, errorMessage: retryError };
 		const delayMs = retryDelayMs(policy!, attempt);
 		await callbacks?.onRetryScheduled?.(attempt, maxAttempts, delayMs, lastRetry.errorMessage);
 

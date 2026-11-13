@@ -7,8 +7,11 @@
 
 import type { AgentMessage, StreamFn, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
+	clampThinkingLevel,
 	contentText,
 	getCurrentSystemMessage,
+	getSupportedThinkingLevels,
+	isRetryableAssistantError,
 	normalizeContext,
 	type RetryCallbacks,
 	type RetryPolicy,
@@ -612,8 +615,9 @@ function createSummarizationOptions(
  * Shared choke point for every compaction/branch-summary summarization call. Wraps the
  * single LLM call in {@link retryAssistantCall} so transient stream drops (e.g.
  * `terminated`, socket close) honor the configured retry policy instead of failing
- * the whole compaction on the first attempt. Deterministic errors and aborts return
- * immediately (see {@link retryAssistantCall}).
+ * the whole compaction on the first attempt. Compaction callers can also retry length
+ * stops, lowering reasoning after two consecutive truncations. Deterministic
+ * provider errors and aborts return immediately (see {@link retryAssistantCall}).
  */
 export async function completeSummarization(
 	model: Model<any>,
@@ -622,10 +626,11 @@ export async function completeSummarization(
 	streamFn?: StreamFn,
 	retry?: RetryPolicy,
 	callbacks?: RetryCallbacks,
+	retryTruncated = false,
 ): Promise<AssistantMessage> {
 	// Avoid cache writes for one-off summaries. Reuse caller-supplied routing when available;
 	// callers without a session ID, including branch summaries, receive a fresh routing ID.
-	const requestOptions: SimpleStreamOptions = {
+	let requestOptions: SimpleStreamOptions = {
 		...options,
 		cacheRetention: "none",
 		sessionId: options.sessionId ?? uuidv7(),
@@ -634,7 +639,39 @@ export async function completeSummarization(
 		streamFn
 			? (await streamFn(model, context, requestOptions)).result()
 			: completeSimple(model, context, requestOptions);
-	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
+	const reasoningLevels = getSupportedThinkingLevels(model);
+	const initialLevelIndex =
+		retryTruncated && options.reasoning ? reasoningLevels.indexOf(clampThinkingLevel(model, options.reasoning)) : 0;
+	// Length recovery has its own finite ladder, not the transient-error budget.
+	// Each transient retry can also interrupt one pair of consecutive length stops.
+	const policy =
+		retry && initialLevelIndex > 0 ? { ...retry, maxRetries: 2 * (initialLevelIndex + retry.maxRetries) } : retry;
+	let consecutiveTruncations = 0;
+	let transientRetries = 0;
+	return retryAssistantCall(produce, policy, requestOptions.signal, callbacks, (response) => {
+		if (response.stopReason !== "length") {
+			consecutiveTruncations = 0;
+			if (!isRetryableAssistantError(response) || transientRetries >= (retry?.maxRetries ?? 0)) return undefined;
+			transientRetries++;
+			return response.errorMessage || "Unknown error";
+		}
+		if (!retryTruncated || !model.reasoning || !requestOptions.reasoning) return undefined;
+
+		const reasoning = clampThinkingLevel(model, requestOptions.reasoning);
+		const levelIndex = reasoningLevels.indexOf(reasoning);
+		if (levelIndex <= 0) return undefined;
+
+		consecutiveTruncations++;
+		const errorMessage = "Compaction generation hit the token cap and the summary is incomplete";
+		if (consecutiveTruncations < 2) return errorMessage;
+
+		// Replace request-local options; never change the session's thinking level or
+		// mutate options retained by a provider. Omitted reasoning means thinking off.
+		const lowerReasoning = reasoningLevels[levelIndex - 1];
+		requestOptions = { ...requestOptions, reasoning: lowerReasoning === "off" ? undefined : lowerReasoning };
+		consecutiveTruncations = 0;
+		return `${errorMessage}; lowering compaction reasoning from ${reasoning} to ${lowerReasoning}`;
+	});
 }
 
 /**
@@ -737,6 +774,7 @@ export async function generateSummaryWithUsage(
 		streamFn,
 		retry,
 		callbacks,
+		true,
 	);
 
 	const failure = getSummarizationFailure(response, "Summarization");
@@ -1087,6 +1125,7 @@ async function generateTurnPrefixSummary(
 		streamFn,
 		retry,
 		callbacks,
+		true,
 	);
 
 	const failure = getSummarizationFailure(response, "Turn prefix summarization");

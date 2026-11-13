@@ -96,6 +96,62 @@ describe("generateSummary reasoning options", () => {
 		});
 	});
 
+	it("skips unsupported reasoning levels and stops at the lowest supported level", async () => {
+		const model = createModel(true, 128000);
+		model.thinkingLevelMap = { off: null, minimal: null, medium: null };
+		completeSimpleMock.mockResolvedValue({ ...mockSummaryResponse, stopReason: "length" });
+		const options = { reasoning: "high" as const, maxTokens: 128000, sessionId: "compaction-routing" };
+		const onRetryFinished = vi.fn();
+
+		const result = await completeSummarization(
+			model,
+			normalizeContext({ messages: [] }),
+			options,
+			undefined,
+			{ enabled: true, maxRetries: 0, baseDelayMs: 0 },
+			{ onRetryFinished },
+			true,
+		);
+
+		expect(result.stopReason).toBe("length");
+		expect(completeSimpleMock.mock.calls.map((call) => call[2].reasoning)).toEqual(["high", "high", "low"]);
+		expect(options.reasoning).toBe("high");
+		expect(completeSimpleMock.mock.calls.every((call) => call[2].maxTokens === 128000)).toBe(true);
+		expect(completeSimpleMock.mock.calls.every((call) => call[2].sessionId === "compaction-routing")).toBe(true);
+		expect(onRetryFinished).toHaveBeenCalledWith(false, 2, undefined);
+	});
+
+	it("does not recover truncated branch summaries through the shared helper by default", async () => {
+		completeSimpleMock.mockResolvedValue({ ...mockSummaryResponse, stopReason: "length" });
+		const result = await completeSummarization(
+			createModel(true),
+			normalizeContext({ messages: [] }),
+			{ reasoning: "high" },
+			undefined,
+			{ enabled: true, maxRetries: 3, baseDelayMs: 0 },
+		);
+		expect(result.stopReason).toBe("length");
+		expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([true, false])(
+		"does not retry length stops without enabled reasoning (model reasoning: %s)",
+		async (reasoning) => {
+			completeSimpleMock.mockResolvedValue({ ...mockSummaryResponse, stopReason: "length" });
+			const result = await completeSummarization(
+				createModel(reasoning),
+				normalizeContext({ messages: [] }),
+				{},
+				undefined,
+				{ enabled: true, maxRetries: 3, baseDelayMs: 0 },
+				undefined,
+				true,
+			);
+			expect(result.stopReason).toBe("length");
+			expect(completeSimpleMock).toHaveBeenCalledTimes(1);
+		},
+	);
+
 	it("preserves the string result from generateSummary", async () => {
 		await expect(generateSummary(messages, createModel(false), undefined, "test-key")).resolves.toBe(
 			"## Goal\nTest summary",

@@ -40,6 +40,14 @@ A provider context-overflow error or an early final `stopReason: "length"` can s
 
 You can also trigger manually with `/compact [instructions]`, where optional instructions focus the summary.
 
+### Generation-limit recovery
+
+If a built-in compaction summary hits the output token limit twice in a row, Pi lowers reasoning by one supported level and retries. Continued truncation repeats this process, for example `high → medium → low → minimal → off`. Unsupported levels are skipped. The lowest supported level gets one final attempt; if that also truncates, compaction fails without saving a partial checkpoint. This applies to both history and split-turn prefix summaries in manual and automatic compaction.
+
+The lower reasoning level is local to that summary request. Normal chat, later summaries, saved thinking settings, and output-token caps are unchanged. Branch summaries and extension-provided compaction are unchanged.
+
+Recovery requires `retry.enabled`. The finite reasoning ladder has its own retry allowance, so `retry.maxRetries` does not stop it before the lowest level is tried. Transient provider failures still share the original `retry.maxRetries` budget for that summary request; they reset the consecutive-truncation count. Both kinds of retry use the configured backoff and can be cancelled. Non-retryable provider errors, including invalid token-limit settings, still fail immediately.
+
 ### How It Works
 
 1. **Find cut point**: Walk backwards through the finalized session projection, accumulating token estimates until `keepRecentTokens` (default 20k, configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`) is reached

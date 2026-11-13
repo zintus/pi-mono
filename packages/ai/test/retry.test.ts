@@ -300,6 +300,65 @@ describe("retryAssistantCall", () => {
 		expect(onRetryFinished).toHaveBeenCalledWith(false, 3, "terminated");
 	});
 
+	it("returns length stops unchanged unless a retry classifier is supplied", async () => {
+		const response = fauxAssistantMessage("partial", { stopReason: "length" });
+		const produce = vi.fn(async () => response);
+		expect(await retryAssistantCall(produce, enabled, undefined)).toBe(response);
+		expect(produce).toHaveBeenCalledTimes(1);
+	});
+
+	it("retries caller-classified responses without changing their stop reason", async () => {
+		const response = fauxAssistantMessage("partial", { stopReason: "length" });
+		const produce = vi.fn().mockResolvedValueOnce(response).mockResolvedValueOnce(fauxAssistantMessage("summary"));
+		const onRetryScheduled = vi.fn();
+		const onRetryFinished = vi.fn();
+		const result = await retryAssistantCall(
+			produce,
+			enabled,
+			undefined,
+			{ onRetryScheduled, onRetryFinished },
+			(message) => (message.stopReason === "length" ? "Truncated summary" : undefined),
+		);
+		expect(result.stopReason).toBe("stop");
+		expect(response.stopReason).toBe("length");
+		expect(produce).toHaveBeenCalledTimes(2);
+		expect(onRetryScheduled).toHaveBeenCalledWith(1, 3, 0, "Truncated summary");
+		expect(onRetryFinished).toHaveBeenCalledWith(true, 1);
+	});
+
+	it("returns the final caller-classified failure when its retry budget is exhausted", async () => {
+		const response = fauxAssistantMessage("partial", { stopReason: "length" });
+		const produce = vi.fn(async () => response);
+		const onRetryFinished = vi.fn();
+		const result = await retryAssistantCall(
+			produce,
+			enabled,
+			undefined,
+			{ onRetryFinished },
+			() => "Truncated summary",
+		);
+		expect(result).toBe(response);
+		expect(produce).toHaveBeenCalledTimes(4);
+		expect(onRetryFinished).toHaveBeenCalledWith(false, 3, "Truncated summary");
+	});
+
+	it("does not let a caller classifier retry disabled policies or aborted responses", async () => {
+		const length = fauxAssistantMessage("partial", { stopReason: "length" });
+		const aborted = fauxAssistantMessage("", { stopReason: "aborted" });
+		const onRetryScheduled = vi.fn();
+		for (const [response, policy] of [
+			[length, disabled],
+			[aborted, enabled],
+		] as const) {
+			const produce = vi.fn(async () => response);
+			expect(await retryAssistantCall(produce, policy, undefined, { onRetryScheduled }, () => "Retry this")).toBe(
+				response,
+			);
+			expect(produce).toHaveBeenCalledTimes(1);
+		}
+		expect(onRetryScheduled).not.toHaveBeenCalled();
+	});
+
 	it("reports capped retry delays", async () => {
 		// Regression for #8826.
 		let n = 0;
