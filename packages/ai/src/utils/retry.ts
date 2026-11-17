@@ -49,6 +49,9 @@ const RETRYABLE_PROVIDER_ERROR_PATTERN = buildProviderErrorPattern([
 	"service.?(?:is.?)?(?:temporarily.?)?unavailable",
 	"server.?error",
 	"internal.?error",
+	// OpenAI's `server_error` text. The OpenAI SDK throws a mid-stream SSE error with
+	// this message alone, without the HTTP status or the error code.
+	"server had an error",
 
 	// Wrapper/provider text for transient upstream failures, including OpenRouter
 	// "Provider returned error" responses (#2264) and gateway wording such as

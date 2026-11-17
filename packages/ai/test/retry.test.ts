@@ -12,6 +12,7 @@ const nvidiaNIMResourceExhaustedMessage = "ResourceExhausted: Worker local total
 const bunFetchSocketClosedMessage =
 	"The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()";
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
+const openAIMidStreamServerErrorMessage = "The server had an error while processing your request. Sorry about that!";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
 const azurePeakLoadError =
@@ -145,6 +146,16 @@ describe("provider retry classification", () => {
 		expect(
 			isRetryableAssistantError(
 				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIResponsesEarlyEofMessage }),
+			),
+		).toBe(true);
+	});
+
+	it("matches the OpenAI server error sent mid-stream without a status or code", () => {
+		// The OpenAI SDK throws a mid-stream SSE error with its message alone, so neither
+		// the HTTP status nor the `server_error` code reaches the classifier.
+		expect(
+			isRetryableAssistantError(
+				fauxAssistantMessage("", { stopReason: "error", errorMessage: openAIMidStreamServerErrorMessage }),
 			),
 		).toBe(true);
 	});
