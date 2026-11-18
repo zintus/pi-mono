@@ -865,6 +865,8 @@ Runs once per provider request; retries reuse the same headers rather than re-fi
 
 Fired after the provider-specific payload is built, right before the request is sent. Handlers run in extension load order. Returning `undefined` keeps the payload unchanged. Returning any other value replaces the payload for later handlers and for the actual request.
 
+Pi-generated compaction and branch summaries also run this hook, so request policies such as service-tier overrides apply to summaries as well as normal conversation turns. A caller-supplied `onPayload` callback takes precedence over the session hook; direct `ctx.modelRegistry` calls do not inherit it.
+
 This hook can rewrite provider-level system instructions or remove them entirely. Those payload-level changes are not reflected by `ctx.getSystemPrompt()`, which reports Pi's system prompt string rather than the final serialized provider payload.
 
 ```typescript

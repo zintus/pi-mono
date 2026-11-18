@@ -350,6 +350,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const headerRunner = extensionRunnerRef.current;
 		return {
 			...options,
+			// Summaries bypass the agent loop, which normally supplies the session payload hook.
+			onPayload: options.onPayload ?? transformProviderPayload,
 			timeoutMs: options.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs,
 			websocketConnectTimeoutMs: options.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs(),
 			maxRetries: options.maxRetries ?? providerRetrySettings.maxRetries,
