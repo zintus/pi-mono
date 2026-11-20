@@ -26,6 +26,7 @@ import {
 	writeRawStdout,
 } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
+import { writeDiagnosticsToStderr } from "../diagnostics-stderr.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { toJsonEvent } from "../json-event.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -50,19 +51,20 @@ export type {
 export interface RpcCommandHandlerContext {
 	runtimeHost: AgentSessionRuntime;
 	getSession(): AgentSessionRuntime["session"];
-	rebindSession(): Promise<void>;
 	output(obj: RpcResponse | RpcExtensionUIRequest | object): void;
 	success<T extends RpcCommand["type"]>(id: string | undefined, command: T, data?: object | null): RpcResponse;
 	error(id: string | undefined, command: string, message: string): RpcResponse;
 	/** Keep the transport alive until an asynchronous prompt settles. Returns its completion callback. */
 	onPromptStart?(): () => void;
+	/** Refresh transport subscriptions after the runtime has rebound a replacement session. */
+	onSessionReplaced?(): void;
 }
 
 export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 	return async (command: RpcCommand): Promise<RpcResponse | undefined> => {
 		const id = command.id;
 		const session = context.getSession();
-		const { runtimeHost, output, success, error, rebindSession } = context;
+		const { runtimeHost, output, success, error } = context;
 
 		switch (command.type) {
 			// =================================================================
@@ -116,9 +118,7 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 			case "new_session": {
 				const options = command.parentSession ? { parentSession: command.parentSession } : undefined;
 				const result = await runtimeHost.newSession(options);
-				if (!result.cancelled) {
-					await rebindSession();
-				}
+				if (!result.cancelled) context.onSessionReplaced?.();
 				return success(id, "new_session", result);
 			}
 
@@ -283,21 +283,14 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 
 			case "switch_session": {
 				const result = await runtimeHost.switchSession(command.sessionPath);
-				if (!result.cancelled) {
-					await rebindSession();
-				}
+				if (!result.cancelled) context.onSessionReplaced?.();
 				return success(id, "switch_session", result);
 			}
 
 			case "fork": {
 				const result = await runtimeHost.fork(command.entryId);
-				if (!result.cancelled) {
-					await rebindSession();
-				}
-				return success(id, "fork", {
-					text: result.selectedText,
-					cancelled: result.cancelled,
-				});
+				if (!result.cancelled) context.onSessionReplaced?.();
+				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
 			}
 
 			case "clone": {
@@ -306,9 +299,7 @@ export function createRpcCommandHandler(context: RpcCommandHandlerContext) {
 					return error(id, "clone", "Cannot clone session: no current entry selected");
 				}
 				const result = await runtimeHost.fork(leafId, { position: "at" });
-				if (!result.cancelled) {
-					await rebindSession();
-				}
+				if (!result.cancelled) context.onSessionReplaced?.();
 				return success(id, "clone", { cancelled: result.cancelled });
 			}
 
@@ -695,10 +686,24 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	runtimeHost.setRebindSession(async () => {
 		await rebindSession();
+		// stderr, never stdout: stdout carries the RPC protocol.
+		writeDiagnosticsToStderr(runtimeHost.takeUnreportedDiagnostics());
 	});
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
+		// Subscribe before binding so session_start events reach the client.
+		unsubscribe?.();
+		unsubscribeBackpressure?.();
+		unsubscribe = session.subscribe((event) => {
+			output(toJsonEvent(event));
+			if (event.type === "agent_settled") {
+				void checkShutdownRequested();
+			}
+		});
+		unsubscribeBackpressure = session.agent.subscribe(async () => {
+			await waitForRawStdoutBackpressure();
+		});
 		await session.bindExtensions({
 			uiContext: createExtensionUIContext(),
 			mode: "rpc",
@@ -739,18 +744,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				});
 			},
 		});
-
-		unsubscribe?.();
-		unsubscribeBackpressure?.();
-		unsubscribe = session.subscribe((event) => {
-			output(toJsonEvent(event));
-			if (event.type === "agent_settled") {
-				void checkShutdownRequested();
-			}
-		});
-		unsubscribeBackpressure = session.agent.subscribe(async () => {
-			await waitForRawStdoutBackpressure();
-		});
 	};
 
 	const registerSignalHandlers = (): void => {
@@ -780,7 +773,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	const handleCommand = createRpcCommandHandler({
 		runtimeHost,
 		getSession: () => session,
-		rebindSession,
 		output,
 		success,
 		error,

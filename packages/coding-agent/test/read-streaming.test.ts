@@ -249,7 +249,7 @@ describe("read tool streaming", () => {
 		});
 	});
 
-	// #11956; backported from upstream ef9361ab7.
+	// #11956
 	it("rejects without an unhandled stream error when aborted while opening a local file", async () => {
 		const path = join(tempDir, "abort-on-open.txt");
 		writeFileSync(path, "line\n");

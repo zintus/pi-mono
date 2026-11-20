@@ -58,7 +58,7 @@ function assistant(
 	};
 }
 
-function text(component: { render(width: number): string[] }, width = 100): string {
+function text(component: { render(width: number): readonly string[] }, width = 100): string {
 	return stripAnsi(component.render(width).join("\n"));
 }
 
@@ -285,6 +285,8 @@ function context(proseOnly = false) {
 		isInitialized: true,
 		chatContainer: new Container(),
 		loadedResourcesContainer: new Container(),
+		pendingMessagesContainer: new Container(),
+		pendingBashComponents: [],
 		statusContainer: new Container(),
 		editorContainer: new Container(),
 		extensionDialogs: [],

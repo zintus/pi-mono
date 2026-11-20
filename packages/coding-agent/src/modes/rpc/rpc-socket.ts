@@ -60,9 +60,7 @@ export async function startRpcSocket(runtimeHost: AgentSessionRuntime, socketPat
 		const handleCommand = createRpcCommandHandler({
 			runtimeHost,
 			getSession: () => runtimeHost.session,
-			rebindSession: async () => {
-				subscribeSession();
-			},
+			onSessionReplaced: subscribeSession,
 			output: write,
 			success,
 			error,
